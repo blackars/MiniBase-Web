@@ -73,14 +73,9 @@ const PHOTO_VIEWS = ["frontal", "black_background", "white_background", "lateral
   "back_view", "top_view", "bottom_view", "close_up", "isometric", "other"];
 const REF_VIEWS = ["render_3d", "concept_art", "paint_reference"];
 
-// Logo MiniBase: liminal B/N, geometría puntiaguda (también en app/icon.svg = favicon).
+// Logo MiniBase (web/public/logo.webp, convertido del PNG con ffmpeg).
 function Logo() {
-  return (<svg width="34" height="34" viewBox="0 0 64 64" aria-label="MiniBase" role="img">
-    <rect width="64" height="64" fill="#09090b" />
-    <rect x="6" y="6" width="52" height="52" fill="none" stroke="#fafafa" strokeWidth="4" />
-    <path d="M20 44V20l12 14 12-14v24" fill="none" stroke="#fafafa" strokeWidth="5" strokeLinecap="square" />
-    <rect x="44" y="44" width="8" height="8" fill="#fafafa" />
-  </svg>);
+  return (<img src="/logo.webp" width="34" height="34" alt="MiniBase" />);
 }
 
 function Gallery({ mini, token, api }: { mini: any; token: string; api: string }) {  const [gal, setGal] = useState<any>(null);
