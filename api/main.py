@@ -17,7 +17,7 @@ except Exception:
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import minis, imports, imports_direct, agent, table, media
+from routers import minis, imports, imports_direct, agent, table, media, scn_scenarios
 
 app = FastAPI(title="MiniBase Web API", version="0.3.0",
   description="Inventario real de miniaturas para IA agentica, CV y tablero proyectado.")
@@ -32,6 +32,7 @@ app.include_router(imports_direct.router, prefix="/api/imports", tags=["imports-
 app.include_router(agent.router, prefix="/api/agent", tags=["agent"])
 app.include_router(table.router, prefix="/api/table", tags=["table"])
 app.include_router(media.router, prefix="/api/images", tags=["images"])
+app.include_router(scn_scenarios.router, prefix="/api/scenarios", tags=["scenarios"])
 
 @app.get("/health")
 def health(): return {"ok": True, "version": "0.3.0"}

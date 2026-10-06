@@ -394,6 +394,7 @@ export default function Dashboard() {
       <button onClick={openCreate} className="bg-white text-black rounded px-4 py-2 font-semibold">+ Nueva mini</button>
       <a href="/imports" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">⭳ Importar Excel</a>
       <a href="/inbox" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">✓ Completar</a>
+      <a href="/escenarios" className="bg-emerald-400 text-black rounded px-4 py-2 font-semibold">◈ Escenarios</a>
     </div>
     {facets.length > 0 && (
       <div className="flex gap-1 mt-2 flex-wrap items-center">

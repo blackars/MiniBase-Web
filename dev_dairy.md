@@ -198,3 +198,49 @@ carga por lotes desde su Excel real (~600 filas), y poder completar miles de cam
 - +2 minis tras carga real del usuario: candidatas = filas `-v2/-v3` creadas a
   propósito + pares mismo-slug (`Dracula`/`Drácula`) antes colapsados; pendiente
   de verificación del usuario; se normaliza con el reseteo desde cero acordado.
+
+### 9.9 Maqueta Escenarios + migración del trabajo a repo MiniBase-Web
+- El proyecto vigente es `blackars/MiniBase-Web` (repo propio, rama `main`), no la rama
+  `minibase-web` del repo `MiniBase`. Se clonó local y se portó: página
+  `web/app/escenarios/`, migración `005_scenarios_fase1.sql`, router
+  `api/routers/scn_scenarios.py`, registro en `api/main.py`, botón `◈ Escenarios`
+  en dashboard. La `003` del repo nuevo se dejó intacta (equivalente funcional).
+- Maqueta: gate de login, 7 pestañas (Ficha funcional desde §10.5; resto mock con
+  placeholders + contador "próximamente"), canvas tile 12×8, catálogo API futura.
+- Reglas: `render_3d` (cualquier color); sintéticas etiquetadas NO se suben aquí
+  (solo fotos, arte y 1 render de referencia); roles photo (entrena) vs
+  reference/video (no entrenan).
+
+## 10. Plan: módulo Escenarios dentro de la DB MiniBase (mismo proyecto Supabase)
+
+Decisión: **mismo proyecto/supabase, esquema separado por prefijo `scn_` + `collection_id`
+como frontera**. Nada de segundo proyecto ni microservicios físicos por ahora; cada tarjeta
+de la maqueta = un router FastAPI + tablas propias (modularidad lógica, monolito desplegable).
+
+### 10.1 Dónde vive cada cosa (separado de la colección de miniaturas)
+- Minis por `collections.id` del usuario; escenarios en paralelo con
+  `scn_scenarios.collection_id` (mismo dueño, **cero mezcla**; correlación solo por IDs
+  en tablas puente).
+- Imágenes de escenarios en `scn_assets` futura (misma convención Cloudinary
+  `minibase/{user}/scn/{slug}/{vista}`); audio solo metadatos + URL.
+
+### 10.2 Tablas (migración `005_scenarios.sql` y siguientes)
+- `scn_scenarios` (fase 1, creada en §10.5): ficha completa + RLS espejo.
+- `scn_parts` + `scn_part_variants`, `scn_tile_presets` (grid JSONB + `schema_version`),
+  `scn_mounts` + `scn_mount_items(kind=scenery|mini|part, ref_id, x,y,z,rot)` (sin FK
+  dura cruzada), `scn_lightings` (+`projector_payload` para `/table/state`),
+  `scn_audios` (solo metadatos).
+
+### 10.3 API por módulos (`api/routers/scn_*.py`)
+- Ficha CRUD + `GET /dataset` (contexto narrador/DM); partes; tile presets + validate;
+  montajes + `combine-png`; `project` al tablero; todo con idempotencia del ledger.
+
+### 10.4 Orden: 1 ficha ✓ (§10.5) → 2 partes → 3 tile → 4 montajes+PNG →
+5 iluminación+proyector → 6 audio → 7 correlador minis↔escenarios.
+
+### 10.5 Fase 1 ejecutada (ficha funcional)
+- Migración `supabase/migrations/005_scenarios_fase1.sql` (solo `scn_scenarios` + RLS).
+- `api/routers/scn_scenarios.py` (`/api/scenarios` CRUD + `GET /{id}/dataset`;
+  dataset = ficha + arrays vacíos hasta fases 2-6). Requiere correr `003` + `005`
+  en SQL Editor (sin eso, 409 con la instrucción).
+- Web: pestaña Ficha funcional (lista + formulario 13 campos + borrar).
