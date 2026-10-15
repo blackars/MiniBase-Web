@@ -55,9 +55,29 @@ def _clean_row(row: dict, inv: dict, cleaners: dict) -> dict:
     return rec
 
 
+# Presets por hoja (TABLETOP ITEMS etc.): fuerzan tipo y remapean columnas
+# que el mapeo genérico no puede (Type de tokens -> tags, no a `type`).
+SHEET_PRESETS = {
+  "tokens": {"force_type": "token",
+             "field_map": {"Token": "name", "Type": "tags", "Diameter": "diameter_mm"}},
+  "scenography": {"force_type": "scenery",
+                  "field_map": {"Total Weight (g)": "weight_g"},
+                  "unit_weight_from": "Total Weight (g)"},
+}
+KNOWN_TYPES = ("mini", "scenery", "token", "tile", "prop")
+
+
+def preset_for_sheet(sname: str | None) -> dict | None:
+    k = (sname or "").casefold()
+    for name, p in SHEET_PRESETS.items():
+        if name in k:
+            return p
+    return None
+
+
 def parse_workbook(file_bytes: bytes, filename: str, sheet: str | None = None,
                    mapping: dict | None = None):
-    """Lee xlsx/csv -> (rows, mapping_usado). Reusa limpieza de routers.imports."""
+    """Lee xlsx/csv -> (sname, rows, inv, preset). Reusa limpieza de routers.imports."""
     import pandas as pd
     from routers import imports as _imp
 
@@ -83,14 +103,20 @@ def parse_workbook(file_bytes: bytes, filename: str, sheet: str | None = None,
     else:
         sug = _imp.suggest_mapping(df.columns.tolist())
         inv = {c: v["canon"] for c, v in sug.items() if v["canon"]}
+    preset = preset_for_sheet(sname)
+    if preset:
+        for ecol, canon in preset.get("field_map", {}).items():
+            if ecol in df.columns and canon in _imp.CANON:
+                inv[ecol] = canon
     cleaners = {
         "tags": _imp.clean_tags, "weight_g": _imp.clean_num,
         "height_mm": _imp.clean_num, "radius_of_base_mm": _imp.clean_num,
+        "diameter_mm": _imp.clean_num,
         "quantity": (lambda v: _imp.clean_int(v) or 1),
         "lore_is_canon": _imp.clean_bool,
     }
     rows = df.to_dict(orient="records")
-    return sname, rows, inv
+    return sname, rows, inv, preset
 
 
 def resolve_collection(conn, user_id: str | None = None):
@@ -129,8 +155,12 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
             s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
             return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
-    sname, rows, inv = parse_workbook(file_bytes, filename, sheet, mapping)
+    sname, rows, inv, preset = parse_workbook(file_bytes, filename, sheet, mapping)
     file_hash = hashlib.sha256(file_bytes).hexdigest()
+    force_type = (preset or {}).get("force_type")
+    if force_type not in KNOWN_TYPES:
+        force_type = None
+    unit_from = (preset or {}).get("unit_weight_from")
 
     # 1. Construir payloads + hash (en memoria, sin DB)
     payloads: list = []  # (key, slug, rec, hash, name, excel_i)
@@ -141,6 +171,7 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
             rec = _clean_row(row, inv, {
                 "tags": _imp.clean_tags, "weight_g": _imp.clean_num,
                 "height_mm": _imp.clean_num, "radius_of_base_mm": _imp.clean_num,
+                "diameter_mm": _imp.clean_num,
                 "quantity": (lambda v: _imp.clean_int(v) or 1),
                 "lore_is_canon": _imp.clean_bool,
             })
@@ -148,10 +179,19 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
             for ecol, canon in inv.items():
                 if canon not in rec and canon not in (
                         "tags", "weight_g", "height_mm", "radius_of_base_mm",
-                        "quantity", "lore_is_canon"):
+                        "diameter_mm", "quantity", "lore_is_canon"):
                     v = _imp.clean_str(row.get(ecol))
                     if v not in (None, "", []):
                         rec.setdefault(canon, v)
+            if force_type:
+                rec["type"] = force_type
+            if unit_from and rec.get("weight_g") is not None:
+                # la hoja trae peso TOTAL: unitario = total / cantidad
+                try:
+                    q = float(rec.get("quantity") or 1) or 1
+                    rec["weight_g"] = round(float(rec["weight_g"]) / q, 2)
+                except (TypeError, ValueError):
+                    pass
             name = rec.get("name")
             if not name:
                 skipped += 1
@@ -238,9 +278,9 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
                 cur.execute(
                     "select m.id, m.name, m.slug, m.type, m.quantity, m.external_key,"
                     " v.shape, v.bioform, v.material, v.main_color, v.secondary_color,"
-                    " v.weight_g, v.height_mm, v.radius_of_base_mm, v.scale,"
+                    " v.weight_g, v.height_mm, v.radius_of_base_mm, v.diameter_mm, v.scale,"
                     " l.designer, l.painted_by, l.label, l.lore_is_canon,"
-                    " l.character_origin, l.story, l.year,"
+                    " l.character_origin, l.story, l.comment, l.year,"
                     " l.code_or_reference, l.url,"
                     " coalesce((select array_agg(t.name) from public.miniature_tags mt "
                     " join public.tags t on t.id = mt.tag_id where mt.miniature_id = m.id), '{}') as tags"
@@ -262,10 +302,12 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
                     "secondary_color": base.get("secondary_color"),
                     "weight_g": base.get("weight_g"), "height_mm": base.get("height_mm"),
                     "radius_of_base_mm": base.get("radius_of_base_mm"),
+                    "diameter_mm": base.get("diameter_mm"),
                     "designer": base.get("designer"), "painted_by": base.get("painted_by"),
                     "label": base.get("label"), "lore_is_canon": base.get("lore_is_canon"),
                     "character_origin": base.get("character_origin"),
-                    "story": base.get("story"), "year": base.get("year"),
+                    "story": base.get("story"), "comment": base.get("comment"),
+                    "year": base.get("year"),
                     "code_or_reference": base.get("code_or_reference"),
                     "url": base.get("url"), "tags": list(base.get("tags") or []),
                     "stats": {},
@@ -342,31 +384,35 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
                 v_vals = [(m, r[3].get("shape"), r[3].get("bioform"), r[3].get("material"),
                            r[3].get("main_color"), r[3].get("secondary_color"),
                            r[3].get("weight_g"), r[3].get("height_mm"),
-                           r[3].get("radius_of_base_mm"), str(r[3].get("scale") or "28mm"))
+                           r[3].get("radius_of_base_mm"), r[3].get("diameter_mm"),
+                           str(r[3].get("scale") or "28mm"))
                           for idx, r in enumerate(all_rows) for m in [id_by_row[idx]]]
                 execute_values(cur,
                     "insert into public.visual_metadata (miniature_id, shape, bioform, material,"
-                    " main_color, secondary_color, weight_g, height_mm, radius_of_base_mm, scale)"
+                    " main_color, secondary_color, weight_g, height_mm, radius_of_base_mm,"
+                    " diameter_mm, scale)"
                     " values %s on conflict (miniature_id) do update set shape=excluded.shape,"
                     " bioform=excluded.bioform, material=excluded.material,"
                     " main_color=excluded.main_color, secondary_color=excluded.secondary_color,"
                     " weight_g=excluded.weight_g, height_mm=excluded.height_mm,"
-                    " radius_of_base_mm=excluded.radius_of_base_mm, scale=excluded.scale",
+                    " radius_of_base_mm=excluded.radius_of_base_mm,"
+                    " diameter_mm=excluded.diameter_mm, scale=excluded.scale",
                     v_vals)
                 l_vals = [(m, r[3].get("designer"), r[3].get("painted_by"),
                            r[3].get("label"), r[3].get("lore_is_canon"),
                            r[3].get("character_origin"), r[3].get("story"),
+                           r[3].get("comment"),
                            r[3].get("year"), r[3].get("code_or_reference"), r[3].get("url"))
                           for idx, r in enumerate(all_rows) for m in [id_by_row[idx]]]
                 execute_values(cur,
                     "insert into public.lore (miniature_id, designer, painted_by, label,"
-                    " lore_is_canon, character_origin, story, year, code_or_reference, url)"
+                    " lore_is_canon, character_origin, story, comment, year, code_or_reference, url)"
                     " values %s"
                     " on conflict (miniature_id) do update set designer=excluded.designer,"
                     " painted_by=excluded.painted_by, label=excluded.label,"
                     " lore_is_canon=excluded.lore_is_canon,"
                     " character_origin=excluded.character_origin,"
-                    " story=excluded.story, year=excluded.year,"
+                    " story=excluded.story, comment=excluded.comment, year=excluded.year,"
                     " code_or_reference=excluded.code_or_reference, url=excluded.url",
                     l_vals)
                 # tags: preload + faltantes + links (3 queries, no loops)

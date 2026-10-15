@@ -72,6 +72,38 @@ def list_images(mini_id: str, request: Request):
   return {"miniature_id": mini_id, "photos": photos, "references": refs,
           "videos": videos, "cv_ready": len(photos) >= 3}
 
+class CoversIn(BaseModel):
+  ids: list[str] = []
+
+@router.post("/covers")
+def covers(c: CoversIn, request: Request):
+  """Portada por mini en 1 query: frontal > render_3d > concept_art > 1ra foto."""
+  from services import db as _db
+  uid = _uid(request)
+  sb = _db.client()
+  ids = (c.ids or [])[:200]
+  if not ids:
+    return {"covers": {}}
+  col = sb.table("collections").select("id").eq("user_id", uid).limit(1).execute().data
+  if not col:
+    return {"covers": {}}
+  col_id = col[0]["id"]
+  mine = sb.table("miniatures").select("id").eq("collection_id", col_id) \
+    .in_("id", ids).execute().data or []
+  mine_ids = [r["id"] for r in mine]
+  if not mine_ids:
+    return {"covers": {}}
+  rows = sb.table("images").select("miniature_id,view_type,secure_url,role") \
+    .in_("miniature_id", mine_ids).order("created_at").execute().data or []
+  order = {"frontal": 0, "render_3d": 1, "concept_art": 2}
+  best: dict = {}
+  for r in rows:
+    mid = r["miniature_id"]
+    rank = order.get(r.get("view_type"), 3)
+    if mid not in best or rank < best[mid][0]:
+      best[mid] = (rank, r["secure_url"])
+  return {"covers": {mid: url for mid, (_, url) in best.items()}}
+
 @router.post("/complete")
 def complete_image(img: ImageComplete, request: Request):
   from services import db as _db

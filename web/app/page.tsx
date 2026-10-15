@@ -23,12 +23,13 @@ async function restMe(accessToken: string) {
 }
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const EMPTY = { name: "", type: "mini", quantity: 1, shape: "", bioform: "", material: "", main_color: "", secondary_color: "", weight_g: "", height_mm: "", radius_of_base_mm: "", scale: "28mm", tags: "", designer: "", painted_by: "", label: "", lore_is_canon: "", story: "", character_origin: "", year: "", code_or_reference: "", url: "", system: "", faction: "" };
+const EMPTY = { name: "", type: "mini", quantity: 1, shape: "", bioform: "", material: "", main_color: "", secondary_color: "", weight_g: "", height_mm: "", radius_of_base_mm: "", diameter_mm: "", scale: "28mm", tags: "", designer: "", painted_by: "", label: "", lore_is_canon: "", story: "", comment: "", character_origin: "", year: "", code_or_reference: "", url: "", system: "", faction: "" };
 const TYPES = ["mini", "scenery", "token", "tile", "prop"];
 const FILTER_FIELDS = [
   { k: "main_color", label: "Color princ." }, { k: "secondary_color", label: "Color sec." },
   { k: "bioform", label: "Bioforma" }, { k: "material", label: "Material" },
   { k: "height_mm", label: "Altura mm" }, { k: "radius_of_base_mm", label: "Base mm" },
+  { k: "diameter_mm", label: "Diámetro mm" },
   { k: "designer", label: "Diseñador" }, { k: "painted_by", label: "Pintor" },
   { k: "label", label: "Marca/sello" }, { k: "character_origin", label: "Origen" },
   { k: "year", label: "Año" },
@@ -55,8 +56,10 @@ function toPayload(f: any) {
     shape: f.shape || null, bioform: f.bioform || null, material: f.material || null,
     main_color: f.main_color || null, secondary_color: f.secondary_color || null,
     weight_g: num(f.weight_g), height_mm: num(f.height_mm), radius_of_base_mm: num(f.radius_of_base_mm),
+    diameter_mm: num(f.diameter_mm),
     scale: f.scale || "28mm", tags,
     designer: f.designer || null, painted_by: f.painted_by || null, story: f.story || null,
+    comment: f.comment || null,
     label: f.label || null, lore_is_canon: f.lore_is_canon === "" ? null : f.lore_is_canon === "true",
     character_origin: f.character_origin || null, year: f.year || null,
     code_or_reference: f.code_or_reference || null, url: f.url || null,
@@ -65,7 +68,7 @@ function toPayload(f: any) {
 function fromRec(m: any) {
   return { ...EMPTY, ...m, tags: Array.isArray(m.tags) ? m.tags.join(", ") : (m.tags || ""),
     lore_is_canon: m.lore_is_canon == null ? "" : String(m.lore_is_canon),
-    weight_g: m.weight_g ?? "", height_mm: m.height_mm ?? "", radius_of_base_mm: m.radius_of_base_mm ?? "" };
+    weight_g: m.weight_g ?? "", height_mm: m.height_mm ?? "", radius_of_base_mm: m.radius_of_base_mm ?? "", diameter_mm: m.diameter_mm ?? "" };
 }
 
 // Vistas por roles: photo = entrena CV / reference = NO entrena (solo rastrear fuente)
@@ -212,6 +215,7 @@ export default function Dashboard() {
   const [ftype, setFtype] = useState("");
   const [fvals, setFvals] = useState<any>({});
   const [ffacets, setFfacets] = useState<any>({});
+  const [covers, setCovers] = useState<any>({});
   const [loading, setLoading] = useState(false);
 
   function authHeaders(extra: any = {}) {
@@ -233,7 +237,7 @@ export default function Dashboard() {
             const me = await restMe(s.access_token);
             if (me.ok && me.user?.email) {
               setUser(me.user); setToken(s.access_token);
-              reload("", s.access_token); loadFacets(s.access_token); loadFieldFacets(s.access_token);
+              reload("", s.access_token); loadFacets(s.access_token, ""); loadFieldFacets(s.access_token);
               setChecking(false);
               return;
             }
@@ -261,13 +265,29 @@ export default function Dashboard() {
       });
       const r = await fetch(`${API}/api/minis?${qs}`, { headers: h });
       const j = await r.json();
-      if (r.ok) { setMinis(j.items ?? []); setTotal(j.total ?? 0); setPage(j.page ?? p); }
+      if (r.ok) {
+        setMinis(j.items ?? []); setTotal(j.total ?? 0); setPage(j.page ?? p);
+        loadCovers((j.items ?? []).map((m: any) => m.id), tk);
+      }
       else setLoginMsg(j.detail ? String(j.detail) : "");
     } catch {} finally { setLoading(false); }
   }
-  async function loadFacets(tk: string) {
+  // Portadas en 1 sola llamada: frontal > render_3d > concept_art > 1ra foto
+  async function loadCovers(ids: string[], tk: string = token) {
+    if (!ids.length || !tk) return;
     try {
-      const r = await fetch(`${API}/api/minis/facets/tags`, {
+      const r = await fetch(`${API}/api/images/covers`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tk}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }) });
+      const j = await r.json();
+      if (r.ok) setCovers(j.covers ?? {});
+    } catch {}
+  }
+  async function loadFacets(tk: string, type: string = "") {
+    try {
+      const qs = type ? `?type=${encodeURIComponent(type)}` : "";
+      const r = await fetch(`${API}/api/minis/facets/tags${qs}`, {
         headers: { Authorization: `Bearer ${tk}` } });
       const j = await r.json();
       if (r.ok) setFacets(j.tags ?? []);
@@ -314,7 +334,7 @@ export default function Dashboard() {
         access_token: data.access_token, refresh_token: data.refresh_token, user: data.user,
       }));
       setUser(data.user); setToken(data.access_token);
-      setLoginMsg(""); reload("", data.access_token); loadFacets(data.access_token); loadFieldFacets(data.access_token);
+      setLoginMsg(""); reload("", data.access_token); loadFacets(data.access_token, ""); loadFieldFacets(data.access_token);
     } catch (e: any) {
       setLoginMsg("Sin conexión a Supabase: " + (e?.message || e));
     }
@@ -337,13 +357,13 @@ export default function Dashboard() {
     const url = editing ? `${API}/api/minis/${editing.id}` : `${API}/api/minis`;
     const r = await fetch(url, { method: editing ? "PUT" : "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(payload) });
     if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error al guardar: " + (j.detail || r.status)); }
-    setShowForm(false); reload(q, token, page); loadFacets(token); loadFieldFacets(token);
+    setShowForm(false); reload(q, token, page); loadFacets(token, ftype); loadFieldFacets(token);
   }
   async function remove(m: any) {
     if (!confirm(`¿Borrar ${m.name}?`)) return;
     const r = await fetch(`${API}/api/minis/${m.id}`, { method: "DELETE", headers: authHeaders() });
     if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error al borrar: " + (j.detail || r.status)); }
-    setDetail(null); setShowForm(false); reload(q, token, page); loadFacets(token); loadFieldFacets(token);
+    setDetail(null); setShowForm(false); reload(q, token, page); loadFacets(token, ftype); loadFieldFacets(token);
   }
   const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
   const inp = "bg-zinc-900 border border-zinc-800 rounded px-3 py-2 outline-none w-full text-sm";
@@ -386,7 +406,7 @@ export default function Dashboard() {
         {q && (<button onClick={() => setQ("")} title="Limpiar búsqueda"
           className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white text-xl leading-none">×</button>)}
       </div>
-      <select value={ftype} onChange={e => { setFtype(e.target.value); setPage(1); reload(q, token, 1, selTags, e.target.value); }}
+      <select value={ftype} onChange={e => { const t = e.target.value; setFtype(t); setSelTags([]); setPage(1); loadFacets(token, t); reload(q, token, 1, [], t); }}
         className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm">
         <option value="">todo tipo</option>
         {["mini", "scenery", "token", "tile", "prop"].map(t => <option key={t} value={t}>{t}</option>)}
@@ -398,7 +418,7 @@ export default function Dashboard() {
     </div>
     {facets.length > 0 && (
       <div className="flex gap-1 mt-2 flex-wrap items-center">
-        <span className="text-xs text-zinc-500">Tags (cualquiera):</span>
+        <span className="text-xs text-zinc-500">Tags{ftype ? ` en ${ftype}` : ""} (cualquiera):</span>
         {facets.slice(0, 30).map((t: any) => (
           <button key={t.name} onClick={() => {
             const next = selTags.includes(t.name) ? selTags.filter(x => x !== t.name) : [...selTags, t.name];
@@ -429,8 +449,12 @@ export default function Dashboard() {
     <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
       {minis.map((m: any) => (
         <div key={m.id} onClick={() => setDetail(m)} className="cursor-pointer bg-zinc-900 border border-zinc-800 rounded p-3 hover:border-zinc-500">
-          <div className="aspect-square bg-zinc-800 rounded mb-2 flex items-center justify-center text-4xl">
-            {m.type === "scenery" ? "🏰" : m.type === "token" ? "🪙" : "🐉"}</div>
+          <div className="aspect-square bg-zinc-800 rounded mb-2 overflow-hidden">
+            {covers[m.id] ? <img src={covers[m.id]} alt={m.name} loading="lazy"
+              className="w-full h-full object-cover" /> : (
+              <div className="w-full h-full flex items-center justify-center text-4xl">
+                {m.type === "scenery" ? "🏰" : m.type === "token" ? "🪙" : "🐉"}</div>)}
+          </div>
           <div className="font-semibold truncate">{m.name}</div>
           <div className="text-xs text-zinc-400">{m.type} · x{m.quantity ?? 1} · {m.completeness_score ?? 0}%</div>
           <div className="h-1 bg-zinc-800 rounded mt-2"><div className="h-1 bg-emerald-400 rounded" style={{ width: `${m.completeness_score ?? 0}%` }} /></div>
@@ -457,18 +481,21 @@ export default function Dashboard() {
 
     {detail && (
       <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4" onClick={() => setDetail(null)}>
-        <div className="bg-zinc-950 border border-zinc-800 rounded max-w-lg w-full p-5" onClick={e => e.stopPropagation()}>
+        <div className="bg-zinc-950 border border-zinc-800 rounded max-w-lg w-full p-5 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          {covers[detail.id] && (
+            <img src={covers[detail.id]} alt={detail.name} className="w-full max-h-64 object-contain rounded bg-black mb-2" />)}
           <h2 className="text-xl font-bold">{detail.name}</h2>
           <p className="text-xs text-zinc-400">{detail.type} · {detail.system || "sin sistema"} · {detail.faction || "sin facción"}</p>
           <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
             <div><span className={lbl}>Forma / Bioforma</span>{detail.shape || "—"} / {detail.bioform || "—"}</div>
             <div><span className={lbl}>Material / Escala</span>{detail.material || "—"} / {detail.scale || "—"}</div>
             <div><span className={lbl}>Colores</span>{detail.main_color || "—"} + {detail.secondary_color || "—"}</div>
-            <div><span className={lbl}>Alto / Peso / Base</span>{detail.height_mm ?? "—"}mm / {detail.weight_g ?? "—"}g / {detail.radius_of_base_mm ?? "—"}mm</div>
+            <div><span className={lbl}>Alto / Peso / Base / Diám.</span>{detail.height_mm ?? "—"}mm / {detail.weight_g ?? "—"}g / {detail.radius_of_base_mm ?? "—"}mm / {detail.diameter_mm ?? "—"}mm</div>
             <div><span className={lbl}>Tags</span>{(detail.tags || []).join(", ") || "—"}</div>
             <div><span className={lbl}>Autor / Pintor / Año</span>{detail.designer || "—"} / {detail.painted_by || "—"} / {detail.year || "—"}</div>
           </div>
           <p className="text-sm mt-3"><span className={lbl}>Historia / lore</span>{detail.story || "Sin historia todavía"}</p>
+          {detail.comment && (<p className="text-sm mt-2"><span className={lbl}>Comentario</span>{detail.comment}</p>)}
           <p className="text-xs text-zinc-500 mt-1">Origen: {detail.character_origin || "—"} · Ref: {detail.code_or_reference || "—"}</p>
           <Gallery mini={detail} token={token} api={API} />
           <div className="flex gap-2 mt-4">
@@ -496,6 +523,7 @@ export default function Dashboard() {
             <div><label className={lbl}>Alto mm</label><input type="number" step="any" className={inp} value={form.height_mm} onChange={set("height_mm")} /></div>
             <div><label className={lbl}>Peso g</label><input type="number" step="any" className={inp} value={form.weight_g} onChange={set("weight_g")} /></div>
             <div><label className={lbl}>Base mm</label><input type="number" step="any" className={inp} value={form.radius_of_base_mm} onChange={set("radius_of_base_mm")} /></div>
+            <div><label className={lbl}>Diámetro mm</label><input type="number" step="any" className={inp} value={form.diameter_mm} onChange={set("diameter_mm")} placeholder="tokens" /></div>
             <div><label className={lbl}>Sistema RPG</label><input className={inp} value={form.system} onChange={set("system")} placeholder="D&D, Warhammer…" /></div>
             <div className="col-span-2"><label className={lbl}>Tags (separados por coma)</label><input className={inp} value={form.tags} onChange={set("tags")} placeholder="Fantasy, D&D" /></div>
             <div><label className={lbl}>Diseñador</label><input className={inp} value={form.designer} onChange={set("designer")} /></div>
@@ -506,8 +534,18 @@ export default function Dashboard() {
             <div><label className={lbl}>Año / Ref</label><div className="flex gap-2"><input className={inp} value={form.year} onChange={set("year")} placeholder="año" /><input className={inp} value={form.code_or_reference} onChange={set("code_or_reference")} placeholder="ref" /></div></div>
             <div className="col-span-2"><label className={lbl}>Origen del personaje</label><input className={inp} value={form.character_origin} onChange={set("character_origin")} /></div>
             <div className="col-span-2"><label className={lbl}>Historia / lore</label><textarea className={inp} rows={3} value={form.story} onChange={set("story")} placeholder="Lore, personalidad, cómo usarla en partida…" /></div>
+            <div className="col-span-2"><label className={lbl}>Comentario</label><input className={inp} value={form.comment} onChange={set("comment")} placeholder="nota breve…" /></div>
             <div className="col-span-2"><label className={lbl}>URL referencia</label><input className={inp} value={form.url} onChange={set("url")} /></div>
           </div>
+          {editing ? (
+            <div className="mt-3 border-t border-zinc-800 pt-3">
+              <h3 className="text-sm font-bold">Fotos por vista (13 del esquema + referencia)</h3>
+              <p className="text-xs text-zinc-500">Frontal es la portada; si no hay, render_3d; si no, la ilustración (concept_art).</p>
+              <Gallery mini={editing} token={token} api={API} />
+            </div>
+          ) : (
+            <p className="text-xs text-zinc-500 mt-3">Guarda la ficha primero y podrás subir sus 13 vistas aquí mismo.</p>
+          )}
           <div className="flex gap-2 mt-4">
             <button type="submit" className="bg-white text-black rounded px-4 py-2 font-semibold">Guardar</button>
             <button type="button" onClick={() => setShowForm(false)} className="bg-zinc-800 rounded px-4 py-2">Cancelar</button>

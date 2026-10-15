@@ -150,13 +150,14 @@ def sb_create_mini(payload: dict, user_id: str | None = None) -> dict:
       "material": payload.get("material"), "main_color": payload.get("main_color"),
       "secondary_color": payload.get("secondary_color"), "weight_g": payload.get("weight_g"),
       "height_mm": payload.get("height_mm"), "radius_of_base_mm": payload.get("radius_of_base_mm"),
+      "diameter_mm": payload.get("diameter_mm"),
       "scale": payload.get("scale", "28mm")}, on_conflict="miniature_id").execute()
     sb.table("lore").upsert({
       "miniature_id": mid, "designer": payload.get("designer"),
       "painted_by": payload.get("painted_by"), "label": payload.get("label"),
       "lore_is_canon": payload.get("lore_is_canon"),
       "character_origin": payload.get("character_origin"),
-      "story": payload.get("story"), "comment": None, "year": payload.get("year"),
+      "story": payload.get("story"), "comment": payload.get("comment"), "year": payload.get("year"),
       "code_or_reference": payload.get("code_or_reference"),
       "url": payload.get("url")}, on_conflict="miniature_id").execute()
     if payload.get("system") or payload.get("faction"):
@@ -186,11 +187,11 @@ def sb_get_mini(mid: str, user_id: str | None = None) -> dict:
     if v:
       out.update({k: v[0].get(k) for k in
         ("shape", "bioform", "material", "main_color", "secondary_color",
-         "weight_g", "height_mm", "radius_of_base_mm", "scale") if v[0].get(k) is not None})
+         "weight_g", "height_mm", "radius_of_base_mm", "diameter_mm", "scale") if v[0].get(k) is not None})
     lo = sb.table("lore").select("*").eq("miniature_id", mid).limit(1).execute().data
     if lo:
       out.update({k: lo[0].get(k) for k in
-        ("designer", "painted_by", "label", "lore_is_canon", "character_origin", "story", "year",
+        ("designer", "painted_by", "label", "lore_is_canon", "character_origin", "story", "comment", "year",
          "code_or_reference", "url") if lo[0].get(k) is not None})
     rp = sb.table("rpg_profile").select("system,faction").eq("miniature_id", mid).limit(1).execute().data
     if rp:
@@ -206,8 +207,8 @@ def sb_get_mini(mid: str, user_id: str | None = None) -> dict:
     return out
   return _with_retry(_op)
 
-def sb_tag_facets(user_id: str | None = None) -> list[dict]:
-  """Tags con conteos para filtros. 3 queries sin importar el tamaño."""
+def sb_tag_facets(user_id: str | None = None, ftype: str = "") -> list[dict]:
+  """Tags con conteos para filtros. Si ftype viene, solo tags presentes en ese tipo."""
   def _op(sb):
     col_id, owner = _resolve_scope(user_id)
     if not col_id:
@@ -215,8 +216,10 @@ def sb_tag_facets(user_id: str | None = None) -> list[dict]:
     mids = set()
     off = 0
     while True:
-      page = sb.table("miniatures").select("id").eq("collection_id", col_id) \
-        .order("id").range(off, off + 999).execute().data or []
+      qm = sb.table("miniatures").select("id").eq("collection_id", col_id)
+      if ftype:
+        qm = qm.eq("type", ftype)
+      page = qm.order("id").range(off, off + 999).execute().data or []
       if not page:
         break
       off += len(page)
@@ -250,7 +253,7 @@ def sb_tag_facets(user_id: str | None = None) -> list[dict]:
   return _with_retry(_op)
 
 FIELD_FACETS_VISUAL = ["main_color", "secondary_color", "bioform", "material",
-                       "height_mm", "radius_of_base_mm"]
+                       "height_mm", "radius_of_base_mm", "diameter_mm"]
 FIELD_FACETS_LORE = ["designer", "painted_by", "label", "character_origin", "year"]
 
 def sb_field_facets(user_id: str | None = None) -> dict:
@@ -343,7 +346,7 @@ def sb_list_minis(q: str = "", ftype: str = "", tags: list | None = None,
       # Filtros por campos de tablas hijas (visual_metadata / lore).
       # 1 query liviana de mids + 1-2 queries a hijas, luego IN en la principal.
       visual_keys = ("main_color", "secondary_color", "bioform", "material",
-                     "height_mm", "radius_of_base_mm")
+                     "height_mm", "radius_of_base_mm", "diameter_mm")
       lore_keys = ("designer", "painted_by", "label", "character_origin", "year")
       vf = {k: extra[k] for k in visual_keys if k in extra}
       lf = {k: extra[k] for k in lore_keys if k in extra}
@@ -365,7 +368,7 @@ def sb_list_minis(q: str = "", ftype: str = "", tags: list | None = None,
         for i in range(0, len(col_mids), 500):
           qq = sb.table("visual_metadata").select(sel).in_("miniature_id", col_mids[i:i + 500])
           for k, v in vf.items():
-            qq = qq.eq(k, float(v) if k in ("height_mm", "radius_of_base_mm") else v)
+            qq = qq.eq(k, float(v) if k in ("height_mm", "radius_of_base_mm", "diameter_mm") else v)
           acc.update(r["miniature_id"] for r in (qq.execute().data or []))
         keep_sets.append(acc)
       if lf:
@@ -393,13 +396,13 @@ def sb_list_minis(q: str = "", ftype: str = "", tags: list | None = None,
       if v:
         m.update({k: v.get(k) for k in
           ("shape", "bioform", "material", "main_color", "secondary_color",
-           "weight_g", "height_mm", "radius_of_base_mm", "scale") if v.get(k) is not None})
+           "weight_g", "height_mm", "radius_of_base_mm", "diameter_mm", "scale") if v.get(k) is not None})
       lo_ = r.get("lore")
       if isinstance(lo_, list):
         lo_ = lo_[0] if lo_ else None
       if lo_:
         m.update({k: lo_.get(k) for k in
-          ("designer", "painted_by", "label", "lore_is_canon", "character_origin", "story", "year",
+          ("designer", "painted_by", "label", "lore_is_canon", "character_origin", "story", "comment", "year",
            "code_or_reference", "url") if lo_.get(k) is not None})
       rp = r.get("rpg_profile")
       if isinstance(rp, list):
@@ -431,13 +434,14 @@ def sb_update_mini(mid: str, payload: dict, user_id: str | None = None) -> dict:
       "material": payload.get("material"), "main_color": payload.get("main_color"),
       "secondary_color": payload.get("secondary_color"), "weight_g": payload.get("weight_g"),
       "height_mm": payload.get("height_mm"), "radius_of_base_mm": payload.get("radius_of_base_mm"),
+      "diameter_mm": payload.get("diameter_mm"),
       "scale": payload.get("scale", "28mm")}, on_conflict="miniature_id").execute()
     sb.table("lore").upsert({
       "miniature_id": mid, "designer": payload.get("designer"),
       "painted_by": payload.get("painted_by"), "label": payload.get("label"),
       "lore_is_canon": payload.get("lore_is_canon"),
       "character_origin": payload.get("character_origin"),
-      "story": payload.get("story"), "year": payload.get("year"),
+      "story": payload.get("story"), "comment": payload.get("comment"), "year": payload.get("year"),
       "code_or_reference": payload.get("code_or_reference"),
       "url": payload.get("url")}, on_conflict="miniature_id").execute()
     if payload.get("system") or payload.get("faction"):

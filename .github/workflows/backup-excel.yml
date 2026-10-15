@@ -1,0 +1,38 @@
+# Backup Supabase -> Excel + CSV commiteado al repo cada 3 dias.
+# Genera: backups/MiniBase_YYYY-MM-DD.xlsx + MiniBase_latest.xlsx + csv/*.csv + manifest.json
+# El xlsx se abre en la web de GitHub (preview) y en Sheets (Archivo > Importar).
+# El CSV permite =IMPORTDATA con el link raw para consulta "en vivo" en Sheets.
+# Requiere secrets: SUPABASE_URL, SUPABASE_SECRET_KEY
+name: backup-excel
+
+on:
+  schedule:
+    - cron: "23 7 */3 * *"   # cada 3 dias, 07:23 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install supabase>=2.5 pandas>=2.0 openpyxl>=3.1
+      - run: python api/scripts/export_backup.py --verbose
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+      - name: Commit backup
+        run: |
+          git config user.name "minibase-backup-bot"
+          git config user.email "minibase-backup-bot@users.noreply.github.com"
+          git add backups/MiniBase_*.xlsx backups/csv/*.csv backups/manifest.json
+          git diff --cached --quiet && echo "sin cambios, nada que commitear" && exit 0
+          DAY=$(date -u +%Y-%m-%d)
+          git commit -m "backup: MiniBase ${DAY} [skip ci]"
+          git push

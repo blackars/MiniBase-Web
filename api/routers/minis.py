@@ -47,12 +47,14 @@ class MiniIn(BaseModel):
   weight_g: Optional[float] = None
   height_mm: Optional[float] = None
   radius_of_base_mm: Optional[float] = None
+  diameter_mm: Optional[float] = None
   scale: Optional[str] = "28mm"
   tags: list[str] = []
   designer: Optional[str] = None
   painted_by: Optional[str] = None
   label: Optional[str] = None
   lore_is_canon: Optional[bool] = None
+  comment: Optional[str] = None
   story: Optional[str] = None
   character_origin: Optional[str] = None
   year: Optional[str] = None
@@ -111,12 +113,12 @@ def _require_uid(request) -> str:
   return uid
 
 @router.get("/facets/tags")
-def tag_facets(request: Request):
+def tag_facets(request: Request, type: str = ""):
   if _use_sb():
     uid = _require_uid(request)
     try:
       from services import db as _db
-      return {"tags": _db.sb_tag_facets(user_id=uid)}
+      return {"tags": _db.sb_tag_facets(user_id=uid, ftype=type)}
     except HTTPException:
       raise
     except Exception as e:
@@ -124,7 +126,7 @@ def tag_facets(request: Request):
   return {"tags": []}
 
 FILTERABLE = ["main_color", "secondary_color", "bioform", "material", "height_mm",
-              "radius_of_base_mm", "designer", "painted_by", "label",
+              "radius_of_base_mm", "diameter_mm", "designer", "painted_by", "label",
               "character_origin", "year"]
 
 @router.get("/facets/fields")
@@ -146,6 +148,7 @@ def list_minis(request: Request, collection_id: str = "default", q: str = "",
                page: int = 1, page_size: int = 24,
                main_color: str = "", secondary_color: str = "", bioform: str = "",
                material: str = "", height_mm: str = "", radius_of_base_mm: str = "",
+               diameter_mm: str = "",
                designer: str = "", painted_by: str = "", label: str = "",
                character_origin: str = "", year: str = ""):
   page = max(1, page)
@@ -154,6 +157,7 @@ def list_minis(request: Request, collection_id: str = "default", q: str = "",
   filters = {k: v for k, v in {
     "main_color": main_color, "secondary_color": secondary_color, "bioform": bioform,
     "material": material, "height_mm": height_mm, "radius_of_base_mm": radius_of_base_mm,
+    "diameter_mm": diameter_mm,
     "designer": designer, "painted_by": painted_by, "label": label,
     "character_origin": character_origin, "year": year}.items() if v}
   if _use_sb():
@@ -304,8 +308,10 @@ def sign_image(mini_id: str, request: Request, view_type: str = "frontal", colle
   eager = ("f_webp,q_auto:good,w_800,c_limit|"
            "f_webp,q_auto:eco,w_200,c_thumb")
   params = {"timestamp": int(time.time()), "public_id": public_id,
-            "eager": eager, "exif": "false",
+            "eager": eager,
             "folder": f"minibase/{user}/{collection}/{slug}"}
+  # NOTA: no agregar params extra (ej. exif): Cloudinary los ignora al verificar
+  # y la firma deja de coincidir -> "Invalid Signature".
   sig = cloudinary.utils.api_sign_request(params, os.getenv("CLOUDINARY_API_SECRET", ""))
   return {**params, "signature": sig,
           "api_key": os.getenv("CLOUDINARY_API_KEY", ""), "cloud_name": cloud,

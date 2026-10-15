@@ -244,3 +244,93 @@ de la maqueta = un router FastAPI + tablas propias (modularidad lógica, monolit
   dataset = ficha + arrays vacíos hasta fases 2-6). Requiere correr `003` + `005`
   en SQL Editor (sin eso, 409 con la instrucción).
 - Web: pestaña Ficha funcional (lista + formulario 13 campos + borrar).
+
+### 10.6 Rejilla proyectada de tamaño real (fase 1b, repo MiniBase-Web)
+- Regla: escenarios SIN rejilla horneada; el sistema la dibuja encima solo on-demand.
+- Migración `006_scenario_grid.sql`: `grid_cell_cm` (decimales), `grid_color`,
+  `grid_opacity` en `scn_scenarios`. API acepta los 3 (409 guía a 006 si falta).
+- Ficha: `Tile cm` rotulado como cantidad con decimales + inputs celda/color/opacidad
+  (defaults 2.5cm, verde, 0.6).
+- Página `/proyector`: selector de escenario (hereda celda/color), carga de imagen
+  local, toggle rejilla ON/OFF, zoom 0.25–4x, calibración por ancho físico del monitor
+  (px/cm medido = ancho_px / ancho_cm × zoom; se guarda en localStorage), overlay SVG
+  que recalcula con resize. Segunda pantalla: `getScreenDetails` (Chrome/Edge) abre
+  `/proyector?pop=1` en el otro monitor; fallback a fullscreen local.
+- PENDIENTE usuario: correr `006` en SQL Editor (crear con rejilla da 409 hasta entonces).
+- Mudanza a repo vigente: servidores dev ahora corren desde `MiniBase-Web`
+  (`.env` copiados, gitignored); árbol viejo queda congelado.
+- Fix rejilla invisible: era `cellPx = 0` sin calibrar (GridOverlay retorna null).
+  Ahora estima 96dpi CSS hasta calibrar; tecla **G** alterna rejilla (solo movimiento);
+  ventana pop sincronizada por localStorage (`mb_proj`: imagen dataURL, grid, zoom,
+  celda, baseEff + ancho pantalla para re-calibrar tamaño real en el 2do monitor).
+- Rejilla congelada a 1.0x (zoom solo a imagen) + arrastre del fondo (mouse/táctil,
+  con recentrar; pan sincronizado al pop).
+- Servidores dev mudados al árbol `MiniBase-Web` (api :8000 + web :3000 con sus `.env`).
+
+### 10.7 Fases 2-6 ejecutadas (módulos escenarios con fotos)
+- Migración `007_scenarios_modulos.sql`: `scn_assets` (Cloudinary hot + backup Drive cold),
+  `scn_parts`, `scn_tile_presets` (grid JSONB), `scn_mounts` + `scn_mount_items`,
+  `scn_lightings` (+`projector_payload`), `scn_audios` (solo metadatos). RLS espejo en todas.
+- API `api/routers/scn_modules.py` (`/api/scn/...`, login + propiedad por colección):
+  assets sign/complete/list/delete/backup, minis lookup (para montajes con tu base),
+  parts CRUD, tiles CRUD, mounts CRUD + items + `combine` (Pillow compone PNG por capas
+  y lo sube a Cloudinary como WebP + asset kind=montaje), lighting CRUD, audios CRUD.
+  Sin `007`: 409 con la guía (verificado en 5 endpoints; `_need007` central en `_own`).
+- Web `/escenarios` funcional por pestaña con selector de escenario: Partes (+fotos
+  part/art/render_3d), Editor Tile (pintar canvas, guardar/cargar presets),
+  Montajes (buscar minis/escenografía de tu base, agregar piezas, combinar PNGs),
+  Iluminación (presets día/atardecer/noche/niebla + fotos), Audio (soundtracks + sfx
+  con player, URLs Drive/Cloudinary), API (documenta endpoints activos).
+- PENDIENTE usuario: correr `007_scenarios_modulos.sql` en SQL Editor.
+- Fotos por vistas en editar ficha: `Gallery` (13 vistas esquema + referencia) ahora
+  vive también dentro del formulario de edición (antes solo en el modal detalle);
+  en creación pide guardar primero. Portadas del grid: `POST /api/images/covers`
+  (1 query, frontal > render_3d > concept_art > 1ra foto) + portada grande en detalle.
+- Ficha de escenario con locaciones: `AssetStrip cover/art/render_3d` + backup Drive.
+- Fix `Invalid Signature` Cloudinary: se firmaba `exif=false` pero el navegador no lo
+  enviaba (Cloudinary firma EXACTAMENTE lo enviado). Quitado de `scn/assets/sign`
+  (el de minis ya estaba bien). Firma re-verificada localmente: match True.
+
+---
+
+## 11. Sesión 2026-10-15 — keepalive anti-pausa + backups Excel cada 3 días
+
+Motivo: Supabase Free pausa el proyecto sin actividad (~7 días) y todos los datos
+vivían solo en Supabase, sin clon consultable.
+
+### 11.1 Keepalive (anti-pausa)
+- `api/scripts/keepalive.py` (nuevo): `SELECT` barato a `collections` + `upsert` a
+  `keepalive_heartbeat`. Sale 0 si hubo actividad, 1 si falló. Lee `SUPABASE_URL` +
+  `SUPABASE_SECRET_KEY` de env o `api/.env` (vía `services.db`).
+- `supabase/migrations/008_keepalive.sql` (nueva, APLICADA por el usuario en SQL Editor):
+  tabla `public.keepalive_heartbeat(id, last_ping, note)` + RLS con solo lectura.
+- `.github/workflows/keepalive.yml` (nuevo): cron `17 8 */2 * *` (cada 2 días) +
+  `workflow_dispatch`. Instala `supabase` y corre el script con secrets.
+- Verificado local: `collections_muestra=1` OK; heartbeat dio `PGRST205` antes de
+  aplicar la 008 (esperado, el SELECT ya evitaba la pausa).
+
+### 11.2 Backups Excel/CSV al repo (clon consultable)
+- `api/scripts/export_backup.py` (nuevo): exporta las 17 tablas con paginado
+  `range()` (PostgREST limita a 1000) a `backups/MiniBase_YYYY-MM-DD.xlsx`
+  (multi-hoja + `_INDICE`) + `backups/MiniBase_latest.xlsx` (link estable) +
+  `backups/csv/<tabla>.csv` + `backups/manifest.json`. `miniatures.embedding`
+  (vector 512) se excluye a propósito; JSONB se serializa a texto.
+- `.github/workflows/backup-excel.yml` (nuevo): cron `23 7 */3 * *` (cada 3 días) +
+  manual; instala `supabase+pandas+openpyxl`, exporta y commitea solo
+  `backups/MiniBase_*.xlsx + csv/*.csv + manifest.json` como
+  `minibase-backup-bot` (`[skip ci]`).
+- Verificado local contra DB real: 709 miniatures, 709 visual/lore, 643 links,
+  7400 missing_fields, 10.217 filas totales, xlsx 657 KB. Test en
+  `Temp/opencode/minibase_backup_test` (no se commiteó).
+- Sheets en vivo (sin código): `=IMPORTDATA("https://raw.githubusercontent.com/blackars/MiniBase-Web/main/backups/csv/miniatures.csv")`.
+- OJO: repo público = backups públicos. Si hay datos sensibles, pasar repo a
+  privado o migrar a variante Drive con service account.
+
+### 11.3 Pasos manuales (hechos por el usuario) + push
+- Corrió `008_keepalive.sql` en SQL Editor.
+- Agregó secrets `SUPABASE_URL` + `SUPABASE_SECRET_KEY` en GitHub Actions.
+- Este commit pushea: `.github/`, `api/scripts/{keepalive,export_backup}.py`,
+  `008_keepalive.sql`, `backups/.gitkeep`, `backups/csv/.gitkeep` + este dairy.
+- Pendiente: `Run workflow` manual en `keepalive-supabase` y `backup-excel` para
+  verificar el primer backup commiteado; comprobar que `MiniBase_latest.xlsx`
+  abre en preview web.

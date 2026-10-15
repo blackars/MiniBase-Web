@@ -1,0 +1,2 @@
+# Los backups se generan solos cada 3 dias (Actions > backup-excel).
+# No subas tu api/.env aqui. Solo se commitean .xlsx / csv / manifest.json.

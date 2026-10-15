@@ -28,7 +28,7 @@ router = APIRouter()
 GROUPS = {
   "identidad": ["name", "type", "quantity", "code_or_reference", "year", "url"],
   "fisico": ["shape", "bioform", "material", "main_color", "secondary_color",
-             "weight_g", "height_mm", "radius_of_base_mm", "scale"],
+             "weight_g", "height_mm", "radius_of_base_mm", "diameter_mm", "scale"],
   "narrativa": ["designer", "painted_by", "label", "lore_is_canon",
                 "character_origin", "story", "comment"],
   "clasificacion": ["tags"],
@@ -45,6 +45,7 @@ def _norm(s: str) -> str:
 ALIASES = {
   "name": "name", "nombre": "name", "nombreminiatura": "name", "miniatura": "name",
   "mini": "name", "title": "name", "titulo": "name", "nombremodelo": "name",
+  "token": "name",
   "type": "type", "tipo": "type", "tipopieza": "type", "categoria": "type",
   "category": "type", "clase": "type",
   "quantity": "quantity", "cantidad": "quantity", "qty": "quantity",
@@ -65,6 +66,7 @@ ALIASES = {
   "radiusbase": "radius_of_base_mm", "radiusofbasemm": "radius_of_base_mm",
   "base": "radius_of_base_mm", "peana": "radius_of_base_mm",
   "basediameter": "radius_of_base_mm", "diametrobase": "radius_of_base_mm",
+  "diameter": "diameter_mm", "diametro": "diameter_mm",
   "scale": "scale", "escala": "scale",
   "tags": "tags", "tag": "tags", "etiquetas": "tags", "etiqueta": "tags",
   "themes": "tags", "tematica": "tags", "universo": "tags", "faccion": "tags",
@@ -79,7 +81,7 @@ ALIASES = {
   "origen": "character_origin", "origenpersonaje": "character_origin",
   "procedencia": "character_origin",
   "story": "story", "historia": "story", "lore": "story", "trasfondo": "story",
-  "relato": "story", "descripcion": "story", "background": "story",
+  "relato": "story", "descripcion": "story", "description": "story", "background": "story",
   "comment": "comment", "comentario": "comment", "comentarios": "comment",
   "notas": "comment", "notes": "comment", "observaciones": "comment",
   "year": "year", "ano": "year", "fecha": "year",

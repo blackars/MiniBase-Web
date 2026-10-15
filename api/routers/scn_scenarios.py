@@ -34,6 +34,9 @@ class ScenarioIn(BaseModel):
   url: Optional[str] = None
   genre: Optional[str] = None
   visibility: str = "private"
+  grid_cell_cm: Optional[float] = None
+  grid_color: Optional[str] = None
+  grid_opacity: Optional[float] = None
 
 def _col(sb, uid: str) -> str:
   col = sb.table("collections").select("id").eq("user_id", uid).limit(1).execute().data
@@ -65,14 +68,24 @@ def create_scenario(s: ScenarioIn, request: Request):
     raise HTTPException(400, "kind: fisico|digital|hibrido")
   sb = _db.client()
   col_id = _col(sb, uid)
-  try:
-    row = sb.table("scn_scenarios").insert({
+  base = {
       "collection_id": col_id, "name": s.name.strip(), "slug": _slug(s.name),
       "kind": s.kind, "width_cm": s.width_cm, "depth_cm": s.depth_cm,
       "height_cm": s.height_cm, "tile_cm": s.tile_cm, "palette": s.palette,
       "texture": s.texture, "uses": s.uses, "description": s.description,
       "comments": s.comments, "url": s.url, "genre": s.genre,
-      "visibility": s.visibility}).execute().data[0]
+      "visibility": s.visibility}
+  grid = {"grid_cell_cm": s.grid_cell_cm, "grid_color": s.grid_color,
+          "grid_opacity": s.grid_opacity}
+  try:
+    try:
+      row = sb.table("scn_scenarios").insert({**base, **grid}).execute().data[0]
+    except Exception as e:
+      if "grid_cell_cm" in str(e) or "grid_color" in str(e):
+        raise HTTPException(409, "Corre la migración supabase/migrations/006_scenario_grid.sql")
+      raise
+  except HTTPException:
+    raise
   except Exception as e:
     msg = str(e)
     if "scn_scenarios" in msg or "relation" in msg:
@@ -102,13 +115,23 @@ def update_scenario(sid: str, s: ScenarioIn, request: Request):
   if not sb.table("scn_scenarios").select("id").eq("id", sid) \
       .eq("collection_id", col_id).limit(1).execute().data:
     raise HTTPException(404, "no existe")
-  row = sb.table("scn_scenarios").update({
-    "name": s.name.strip(), "slug": _slug(s.name), "kind": s.kind,
-    "width_cm": s.width_cm, "depth_cm": s.depth_cm, "height_cm": s.height_cm,
-    "tile_cm": s.tile_cm, "palette": s.palette, "texture": s.texture,
-    "uses": s.uses, "description": s.description, "comments": s.comments,
-    "url": s.url, "genre": s.genre, "visibility": s.visibility}) \
-    .eq("id", sid).execute().data[0]
+  try:
+    try:
+      row = sb.table("scn_scenarios").update({
+        "name": s.name.strip(), "slug": _slug(s.name), "kind": s.kind,
+        "width_cm": s.width_cm, "depth_cm": s.depth_cm, "height_cm": s.height_cm,
+        "tile_cm": s.tile_cm, "palette": s.palette, "texture": s.texture,
+        "uses": s.uses, "description": s.description, "comments": s.comments,
+        "url": s.url, "genre": s.genre, "visibility": s.visibility,
+        "grid_cell_cm": s.grid_cell_cm, "grid_color": s.grid_color,
+        "grid_opacity": s.grid_opacity}) \
+        .eq("id", sid).execute().data[0]
+    except Exception as e:
+      if "grid_cell_cm" in str(e) or "grid_color" in str(e):
+        raise HTTPException(409, "Corre la migración supabase/migrations/006_scenario_grid.sql")
+      raise
+  except HTTPException:
+    raise
   return row
 
 @router.delete("/{sid}")
