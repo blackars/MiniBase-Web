@@ -1,26 +1,26 @@
 {
-  "fecha_utc": "2026-10-15",
-  "generado_utc": "2026-10-15T05:18:32.151641+00:00",
+  "fecha_utc": "2026-10-16",
+  "generado_utc": "2026-10-16T12:30:20.914908+00:00",
   "tablas": {
     "collections": 1,
     "miniatures": 709,
     "visual_metadata": 709,
-    "images": 0,
+    "images": 1,
     "lore": 709,
     "tags": 25,
-    "miniature_tags": 643,
+    "miniature_tags": 642,
     "rpg_profile": 0,
-    "gameplay_usage": 0,
+    "gameplay_usage": 2,
     "data_sources": 0,
     "imports": 15,
-    "missing_fields": 7400,
+    "missing_fields": 9719,
     "surveys": 0,
     "survey_questions": 0,
     "agent_tasks": 6,
     "table_state": 0,
     "keepalive_heartbeat": 1
   },
-  "total_filas": 10218,
+  "total_filas": 12539,
   "nota_embedding": "miniatures.embedding excluido a proposito (vector 512)",
-  "xlsx": "MiniBase_2026-10-15.xlsx"
+  "xlsx": "MiniBase_2026-10-16.xlsx"
 }

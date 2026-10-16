@@ -1,2 +1,3 @@
-_nota
-tabla vacia o no existe aun
+id,miniature_id,usable_as,preference,notes,play_count,is_favorite,last_used_at
+19b15d74-d6bd-45cf-8f53-0bc187eb26f4,2f6b41ae-613f-4c97-a0a6-69e79591762a,[],3,,0,False,
+45573347-294b-473e-aca2-92f1ed048fb5,4f50c1a8-b5af-486d-b061-e461e5370afa,[],3,,0,False,

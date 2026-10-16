@@ -1,2 +1,2 @@
-_nota
-tabla vacia o no existe aun
+id,miniature_id,view_type,cloudinary_public_id,secure_url,backup_url,mime_type,file_size,width,height,phash,created_at,role
+932fcfe4-0c00-42ad-aaae-8a6059171a37,4f50c1a8-b5af-486d-b061-e461e5370afa,frontal,minibase/me/default/626-624/minibase/me/default/626-624/frontal,"https://res.cloudinary.com/dgff8o52c/image/upload/f_webp,q_auto:good,w_800,c_limit/v1792128392/minibase/me/default/626-624/minibase/me/default/626-624/frontal.webp",,image/webp,37488,720,720,,2026-10-16T05:26:34.577315+00:00,photo
