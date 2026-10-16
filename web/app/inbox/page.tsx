@@ -54,7 +54,7 @@ export default function Inbox() {
   return (<main className="p-6 max-w-4xl mx-auto mb-sharp">
     <a href="/" className="text-zinc-400 text-sm">← Volver</a>
     <h1 className="text-2xl font-bold mt-2">Completar poco a poco</h1>
-    <p className="text-xs text-zinc-500 mt-1">{total} campos vacíos en tu colección. Cada respuesta actualiza la mini y su completitud.</p>
+    <p className="text-xs text-zinc-500 mt-1">{total} campos vacíos en tu colección. Cada respuesta actualiza el tipo y su completitud.</p>
     <div className="flex gap-2 mt-3 flex-wrap items-center">
       <span className="text-xs text-zinc-400">Campo:</span>
       <button onClick={() => changeField("")}

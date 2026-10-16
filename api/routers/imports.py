@@ -32,6 +32,9 @@ GROUPS = {
   "narrativa": ["designer", "painted_by", "label", "lore_is_canon",
                 "character_origin", "story", "comment"],
   "clasificacion": ["tags"],
+  # IA (009, DM agéntico): también mapeables desde Excel si la hoja los trae.
+  "ia": ["size_category", "paint_status", "aliases", "grid_cells",
+         "role", "play_count", "is_favorite"],
   # agente (NO vienen de Excel: se calculan/generan):
   # completeness_score, embedding, rpg_profile, missing_fields, table_state
 }
@@ -91,6 +94,23 @@ ALIASES = {
   "codeorreferene": "code_or_reference",
   "sku": "code_or_reference",
   "url": "url", "link": "url", "enlace": "url", "vinculo": "url",
+  "sizecategory": "size_category", "tamano": "size_category",
+  "tamanocategoria": "size_category", "categoriatamano": "size_category",
+  "size": "size_category", "talla": "size_category",
+  "paintstatus": "paint_status", "pintura": "paint_status",
+  "pintado": "paint_status", "estadopintado": "paint_status",
+  "estadodepintura": "paint_status", "paint": "paint_status",
+  "aliases": "aliases", "alias": "aliases", "apodos": "aliases",
+  "apodo": "aliases", "nombresalternativos": "aliases",
+  "nombrealternativo": "aliases", "aka": "aliases",
+  "gridcells": "grid_cells", "casillas": "grid_cells",
+  "ocupaciongrid": "grid_cells", "ocupacion": "grid_cells",
+  "role": "role", "rol": "role", "papel": "role",
+  "papelescena": "role", "rolcombate": "role",
+  "playcount": "play_count", "partidas": "play_count",
+  "usos": "play_count", "vecesjugada": "play_count",
+  "isfavorite": "is_favorite", "favorita": "is_favorite",
+  "favorito": "is_favorite",
 }
 GROUP_OF = {c: g for g, cols in GROUPS.items() for c in cols}
 
@@ -143,6 +163,19 @@ def clean_tags(v) -> list[str]:
     c = canon_tag(p)
     if c and c not in out:
       out.append(c)
+  return out
+
+def clean_list(v) -> list[str]:
+  """Lista libre (alias): split sin canonicalizar, conserva el texto original."""
+  s = clean_str(v)
+  if s is None:
+    return []
+  import re
+  out = []
+  for p in re.split(r"[,;|/]", s):
+    p = p.strip()
+    if p and p not in out:
+      out.append(p)
   return out
 
 def suggest_mapping(columns: list[str]) -> dict:
@@ -501,11 +534,15 @@ async def confirm(payload: dict, request: Request):
         v = row.get(ecol)
         if canon == "tags":
           val = clean_tags(v)
+        elif canon == "aliases":
+          val = clean_list(v)
         elif canon in ("weight_g", "height_mm", "radius_of_base_mm"):
           val = clean_num(v)
         elif canon == "quantity":
           val = clean_int(v) or 1
-        elif canon == "lore_is_canon":
+        elif canon in ("grid_cells", "play_count"):
+          val = clean_int(v)
+        elif canon in ("lore_is_canon", "is_favorite"):
           val = clean_bool(v)
         else:
           val = clean_str(v)
@@ -517,6 +554,13 @@ async def confirm(payload: dict, request: Request):
       if not name:
         report["skipped"] += 1
         continue
+      # Nombres curados: un Excel viejo no revierte renombres manuales.
+      try:
+        from services.curate import curate_name
+        name = curate_name(name)
+        rec["name"] = name
+      except Exception:
+        pass
       slug = slugify(name)
       if slug in seen_slugs:
         report["skipped"] += 1

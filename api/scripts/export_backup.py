@@ -61,7 +61,8 @@ def fetch_table(sb, table: str, verbose: bool = False) -> list[dict]:
             # embedding se excluye aqui mismo si existe (evita payload gigante)
             if table == "miniatures":
                 sel = ("id,collection_id,name,slug,type,status,quantity,source,"
-                       "external_id,completeness_score,created_at,updated_at")
+                       "external_id,completeness_score,size_category,paint_status,"
+                       "aliases,grid_cells,created_at,updated_at")
                 page = sb.table(table).select(sel).order("created_at").range(off, off + PAGE - 1).execute()
             else:
                 page = sb.table(table).select("*").range(off, off + PAGE - 1).execute()

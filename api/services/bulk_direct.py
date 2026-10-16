@@ -169,11 +169,14 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
     for i, row in enumerate(rows, start=2):
         try:
             rec = _clean_row(row, inv, {
-                "tags": _imp.clean_tags, "weight_g": _imp.clean_num,
+                "tags": _imp.clean_tags, "aliases": _imp.clean_list,
+                "weight_g": _imp.clean_num,
                 "height_mm": _imp.clean_num, "radius_of_base_mm": _imp.clean_num,
                 "diameter_mm": _imp.clean_num,
                 "quantity": (lambda v: _imp.clean_int(v) or 1),
-                "lore_is_canon": _imp.clean_bool,
+                "grid_cells": (lambda v: _imp.clean_int(v) or 1),
+                "play_count": (lambda v: _imp.clean_int(v) or 0),
+                "lore_is_canon": _imp.clean_bool, "is_favorite": _imp.clean_bool,
             })
             # defaults de limpieza para el resto de campos texto
             for ecol, canon in inv.items():
@@ -196,6 +199,11 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
             if not name:
                 skipped += 1
                 continue
+            # Nombres curados: un Excel viejo no revierte renombres manuales
+            # (services.curate). El slug/hash/versionado ya usan el oficial.
+            from services.curate import curate_name
+            name = curate_name(name)
+            rec["name"] = name
             slug = slugify(name)
             key = norm_key(rec.get("code_or_reference"))
             # NOTA: sin dedup aquí; el paso de versionado decide:
@@ -277,16 +285,20 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
                 mids = [m[0] for m in modified]
                 cur.execute(
                     "select m.id, m.name, m.slug, m.type, m.quantity, m.external_key,"
+                    " m.size_category, m.paint_status, m.aliases, m.grid_cells,"
                     " v.shape, v.bioform, v.material, v.main_color, v.secondary_color,"
                     " v.weight_g, v.height_mm, v.radius_of_base_mm, v.diameter_mm, v.scale,"
                     " l.designer, l.painted_by, l.label, l.lore_is_canon,"
                     " l.character_origin, l.story, l.comment, l.year,"
-                    " l.code_or_reference, l.url,"
+                    " l.code_or_reference, l.url, r.system, r.faction, r.role,"
+                    " g.play_count, g.is_favorite,"
                     " coalesce((select array_agg(t.name) from public.miniature_tags mt "
                     " join public.tags t on t.id = mt.tag_id where mt.miniature_id = m.id), '{}') as tags"
                     " from public.miniatures m"
                     " left join public.visual_metadata v on v.miniature_id = m.id"
                     " left join public.lore l on l.miniature_id = m.id"
+                    " left join public.rpg_profile r on r.miniature_id = m.id"
+                    " left join public.gameplay_usage g on g.miniature_id = m.id"
                     " where m.id = any(%s::uuid[])", (mids,))
                 cols = [d[0] for d in cur.description]
                 for r in cur.fetchall():
@@ -311,6 +323,14 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
                     "code_or_reference": base.get("code_or_reference"),
                     "url": base.get("url"), "tags": list(base.get("tags") or []),
                     "stats": {},
+                    "size_category": base.get("size_category"),
+                    "paint_status": base.get("paint_status"),
+                    "aliases": list(base.get("aliases") or []),
+                    "grid_cells": base.get("grid_cells") or 1,
+                    "system": base.get("system"), "faction": base.get("faction"),
+                    "role": base.get("role"),
+                    "play_count": base.get("play_count") or 0,
+                    "is_favorite": base.get("is_favorite"),
                 }
                 for k, v in rec.items():
                     if v not in (None, "", []):
@@ -342,17 +362,25 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
             if [r for r in all_rows if r[6]]:
                 vals = [(str(col_id), r[5], r[2],
                          str(r[3].get("type") or "mini"), int(r[3].get("quantity") or 1),
-                         int(r[3].get("_score") or 0), r[1], r[4])
+                         int(r[3].get("_score") or 0), r[1], r[4],
+                         r[3].get("size_category"), r[3].get("paint_status"),
+                         list(r[3].get("aliases") or []),
+                         int(r[3].get("grid_cells") or 1))
                         for r in all_rows if r[6]]
                 execute_values(cur,
                     "insert into public.miniatures "
                     "(collection_id, name, slug, type, quantity, completeness_score,"
-                    " external_key, row_hash) values %s "
+                    " external_key, row_hash,"
+                    " size_category, paint_status, aliases, grid_cells) values %s "
                     "on conflict (collection_id, slug) do update set name = excluded.name,"
                     " type = excluded.type, quantity = excluded.quantity,"
                     " completeness_score = excluded.completeness_score,"
                     " external_key = coalesce(excluded.external_key, public.miniatures.external_key),"
-                    " row_hash = excluded.row_hash returning id, slug",
+                    " row_hash = excluded.row_hash,"
+                    " size_category = excluded.size_category,"
+                    " paint_status = excluded.paint_status,"
+                    " aliases = excluded.aliases,"
+                    " grid_cells = excluded.grid_cells returning id, slug",
                     vals)
                 for mid, slug in cur.fetchall():
                     new_ids[slug] = mid
@@ -363,10 +391,14 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
                 cur.execute(
                     "update public.miniatures set name=%s, slug=%s, type=%s, quantity=%s,"
                     " completeness_score=%s, external_key=coalesce(%s, external_key),"
-                    " row_hash=%s, updated_at=now() where id=%s",
+                    " row_hash=%s, updated_at=now(),"
+                    " size_category=%s, paint_status=%s, aliases=%s, grid_cells=%s"
+                    " where id=%s",
                     (final.get("name"), slug, str(final.get("type") or "mini"),
                      int(final.get("quantity") or 1), int(final.get("_score") or 0),
-                     key, h, mid))
+                     key, h, final.get("size_category"), final.get("paint_status"),
+                     list(final.get("aliases") or []),
+                     int(final.get("grid_cells") or 1), mid))
 
             id_by_row: dict = {}
             for idx, (mid, key, slug, final, h, name, is_new) in enumerate(all_rows):
@@ -438,6 +470,30 @@ def bulk_upsert(file_bytes: bytes, filename: str, sheet: str | None = None,
                     execute_values(cur,
                         "insert into public.miniature_tags (miniature_id, tag_id) values %s"
                         " on conflict do nothing", pairs)
+                # rpg_profile + gameplay_usage (solo filas que traen esos datos)
+                rpg_vals = [(id_by_row[i], r[3].get("system"),
+                             r[3].get("faction"), r[3].get("role"))
+                            for i, r in enumerate(all_rows)
+                            if r[3].get("system") or r[3].get("faction")
+                            or r[3].get("role")]
+                if rpg_vals:
+                    execute_values(cur,
+                        "insert into public.rpg_profile (miniature_id, system, faction, role)"
+                        " values %s on conflict (miniature_id) do update set"
+                        " system=excluded.system, faction=excluded.faction,"
+                        " role=excluded.role",
+                        rpg_vals)
+                use_vals = [(id_by_row[i], int(r[3].get("play_count") or 0),
+                             bool(r[3].get("is_favorite")))
+                            for i, r in enumerate(all_rows)
+                            if r[3].get("play_count") or r[3].get("is_favorite")]
+                if use_vals:
+                    execute_values(cur,
+                        "insert into public.gameplay_usage (miniature_id, play_count, is_favorite)"
+                        " values %s on conflict (miniature_id) do update set"
+                        " play_count=excluded.play_count,"
+                        " is_favorite=excluded.is_favorite",
+                        use_vals)
                 # faltantes: 1 delete + 1 insert
                 cur.execute("delete from public.missing_fields where miniature_id = any(%s::uuid[])"
                             " and status = 'open'", (mids_all,))

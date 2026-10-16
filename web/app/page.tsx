@@ -23,18 +23,30 @@ async function restMe(accessToken: string) {
 }
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const EMPTY = { name: "", type: "mini", quantity: 1, shape: "", bioform: "", material: "", main_color: "", secondary_color: "", weight_g: "", height_mm: "", radius_of_base_mm: "", diameter_mm: "", scale: "28mm", tags: "", designer: "", painted_by: "", label: "", lore_is_canon: "", story: "", comment: "", character_origin: "", year: "", code_or_reference: "", url: "", system: "", faction: "" };
+const EMPTY = { name: "", type: "mini", quantity: 1, shape: "", bioform: "", material: "", main_color: "", secondary_color: "", weight_g: "", height_mm: "", radius_of_base_mm: "", diameter_mm: "", scale: "28mm", tags: "", designer: "", painted_by: "", label: "", lore_is_canon: "", story: "", comment: "", character_origin: "", year: "", code_or_reference: "", url: "", system: "", faction: "",
+  size_category: "", paint_status: "", aliases: "", grid_cells: 1, role: "", play_count: 0, is_favorite: "" };
 const TYPES = ["mini", "scenery", "token", "tile", "prop"];
+const SIZE_CATEGORIES = ["tiny", "small", "medium", "large", "huge", "gargantuan"];
+const PAINT_STATES = ["sin_pintar", "base", "avanzado", "terminada"];
 const FILTER_FIELDS = [
   { k: "main_color", label: "Color princ." }, { k: "secondary_color", label: "Color sec." },
   { k: "bioform", label: "Bioforma" }, { k: "material", label: "Material" },
   { k: "height_mm", label: "Altura mm" }, { k: "radius_of_base_mm", label: "Base mm" },
   { k: "diameter_mm", label: "Diámetro mm" },
+  { k: "size_category", label: "Tamaño" }, { k: "paint_status", label: "Pintado" },
   { k: "designer", label: "Diseñador" }, { k: "painted_by", label: "Pintor" },
   { k: "label", label: "Marca/sello" }, { k: "character_origin", label: "Origen" },
   { k: "year", label: "Año" },
 ];
 
+function errText(j: any, status: number) {
+  const d = j?.detail;
+  if (typeof d === "string" && d) return d;
+  if (Array.isArray(d) && d.length)
+    return d.map((e: any) => `${(e.loc || []).join(".")}: ${e.msg}`).join(" | ");
+  if (d && typeof d === "object") return JSON.stringify(d);
+  return String(status);
+}
 function canonTag(s: string) {
   const c = s.replace(/\s+/g, " ").trim();
   if (!c) return "";
@@ -52,6 +64,11 @@ function toPayload(f: any) {
     const c = canonTag(t);
     if (c && !tags.includes(c)) tags.push(c);
   }
+  const aliases: string[] = [];
+  for (const a of String(f.aliases || "").split(",")) {
+    const c = a.trim();
+    if (c && !aliases.includes(c)) aliases.push(c);
+  }
   return { collection_id: "default", name: f.name, type: f.type, quantity: Number(f.quantity) || 1,
     shape: f.shape || null, bioform: f.bioform || null, material: f.material || null,
     main_color: f.main_color || null, secondary_color: f.secondary_color || null,
@@ -63,11 +80,18 @@ function toPayload(f: any) {
     label: f.label || null, lore_is_canon: f.lore_is_canon === "" ? null : f.lore_is_canon === "true",
     character_origin: f.character_origin || null, year: f.year || null,
     code_or_reference: f.code_or_reference || null, url: f.url || null,
-    system: f.system || null, faction: f.faction || null, stats: {} };
+    system: f.system || null, faction: f.faction || null, stats: {},
+    size_category: f.size_category || null, paint_status: f.paint_status || null, aliases,
+    grid_cells: Number(f.grid_cells) || 1, role: f.role || null,
+    play_count: Number(f.play_count) || 0,
+    is_favorite: f.is_favorite === "" ? null : f.is_favorite === "true" };
 }
 function fromRec(m: any) {
   return { ...EMPTY, ...m, tags: Array.isArray(m.tags) ? m.tags.join(", ") : (m.tags || ""),
+    aliases: Array.isArray(m.aliases) ? m.aliases.join(", ") : (m.aliases || ""),
     lore_is_canon: m.lore_is_canon == null ? "" : String(m.lore_is_canon),
+    is_favorite: m.is_favorite == null ? "" : String(m.is_favorite),
+    grid_cells: m.grid_cells ?? 1, play_count: m.play_count ?? 0,
     weight_g: m.weight_g ?? "", height_mm: m.height_mm ?? "", radius_of_base_mm: m.radius_of_base_mm ?? "", diameter_mm: m.diameter_mm ?? "" };
 }
 
@@ -134,7 +158,12 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
       const cj = await c.json();
       if (!c.ok) throw new Error(cj.detail || c.status);
       setMsg(""); load();
-    } catch (err: any) { setMsg(String(err.message || err)); }
+    } catch (err: any) {
+      let m = String(err?.message || err);
+      if (m.includes("missing permissions"))
+        m += " → En Cloudinary: Settings → API Keys → tu key → activa el permiso Upload, guarda y reintenta.";
+      setMsg(m);
+    }
     finally { setBusy(false); e.target.value = ""; }
   }
 
@@ -210,6 +239,7 @@ export default function Dashboard() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(24);
   const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState<any>(null);
   const [facets, setFacets] = useState<any[]>([]);
   const [selTags, setSelTags] = useState<string[]>([]);
   const [ftype, setFtype] = useState("");
@@ -237,7 +267,7 @@ export default function Dashboard() {
             const me = await restMe(s.access_token);
             if (me.ok && me.user?.email) {
               setUser(me.user); setToken(s.access_token);
-              reload("", s.access_token); loadFacets(s.access_token, ""); loadFieldFacets(s.access_token);
+              reload("", s.access_token); loadFacets(s.access_token, ""); loadFieldFacets(s.access_token); loadStats(s.access_token);
               setChecking(false);
               return;
             }
@@ -301,6 +331,15 @@ export default function Dashboard() {
       if (r.ok) setFfacets(j.fields ?? {});
     } catch {}
   }
+  // Totales en vivo: tipos únicos + piezas (suma quantity). El conteo principal es tipos.
+  async function loadStats(tk: string) {
+    try {
+      const r = await fetch(`${API}/api/minis/stats`, {
+        headers: { Authorization: `Bearer ${tk}` } });
+      const j = await r.json();
+      if (r.ok) setStats(j);
+    } catch {}
+  }
   function applyFilter(k: string, v: string) {
     const next = { ...fvals, [k]: v };
     if (!v) delete next[k];
@@ -334,7 +373,7 @@ export default function Dashboard() {
         access_token: data.access_token, refresh_token: data.refresh_token, user: data.user,
       }));
       setUser(data.user); setToken(data.access_token);
-      setLoginMsg(""); reload("", data.access_token); loadFacets(data.access_token, ""); loadFieldFacets(data.access_token);
+      setLoginMsg(""); reload("", data.access_token); loadFacets(data.access_token, ""); loadFieldFacets(data.access_token); loadStats(data.access_token);
     } catch (e: any) {
       setLoginMsg("Sin conexión a Supabase: " + (e?.message || e));
     }
@@ -356,14 +395,14 @@ export default function Dashboard() {
     const payload = toPayload(form);
     const url = editing ? `${API}/api/minis/${editing.id}` : `${API}/api/minis`;
     const r = await fetch(url, { method: editing ? "PUT" : "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(payload) });
-    if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error al guardar: " + (j.detail || r.status)); }
-    setShowForm(false); reload(q, token, page); loadFacets(token, ftype); loadFieldFacets(token);
+    if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error al guardar: " + errText(j, r.status)); }
+    setShowForm(false); reload(q, token, page); loadFacets(token, ftype); loadFieldFacets(token); loadStats(token);
   }
   async function remove(m: any) {
     if (!confirm(`¿Borrar ${m.name}?`)) return;
     const r = await fetch(`${API}/api/minis/${m.id}`, { method: "DELETE", headers: authHeaders() });
-    if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error al borrar: " + (j.detail || r.status)); }
-    setDetail(null); setShowForm(false); reload(q, token, page); loadFacets(token, ftype); loadFieldFacets(token);
+    if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error al borrar: " + errText(j, r.status)); }
+    setDetail(null); setShowForm(false); reload(q, token, page); loadFacets(token, ftype); loadFieldFacets(token); loadStats(token);
   }
   const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
   const inp = "bg-zinc-900 border border-zinc-800 rounded px-3 py-2 outline-none w-full text-sm";
@@ -373,7 +412,7 @@ export default function Dashboard() {
     <p className="text-zinc-500 text-sm">Verificando sesión…</p>
   </main>);
 
-  // PUERTA TOTAL: sin sesión no se renderiza nada de la app (ni buscador ni minis).
+  // PUERTA TOTAL: sin sesión no se renderiza nada de la app (ni buscador ni tipos).
   if (!user) return (<main className="min-h-screen flex items-center justify-center p-6 mb-sharp">
     <div className="bg-zinc-900 border border-zinc-800 rounded p-6 w-full max-w-sm">
       <h1 className="text-2xl font-bold">MiniBase Web</h1>
@@ -393,7 +432,7 @@ export default function Dashboard() {
     <div className="flex items-start justify-between gap-4 flex-wrap">
       <h1 className="text-3xl font-bold flex items-center gap-3"><Logo />MiniBase Web</h1>
       <div className="bg-zinc-900 border border-zinc-800 px-3 py-2 text-xs text-zinc-400 text-right">
-        <p className="text-zinc-500">API: {apiOk} · {total} minis · Supabase nube · <a className="underline" href={`${API}/docs`} target="_blank">Swagger</a></p>
+        <p className="text-zinc-500">API: {apiOk} · {stats ? `${stats.tipos} tipos · ${stats.piezas} piezas` : `${total} tipos`} · Supabase nube · <a className="underline" href={`${API}/docs`} target="_blank">Swagger</a></p>
         <p className="mt-1">Conectado: <span className="text-emerald-400">{user.email}</span>
           <button onClick={doLogout} className="underline ml-3">Salir</button>
         </p>
@@ -411,7 +450,7 @@ export default function Dashboard() {
         <option value="">todo tipo</option>
         {["mini", "scenery", "token", "tile", "prop"].map(t => <option key={t} value={t}>{t}</option>)}
       </select>
-      <button onClick={openCreate} className="bg-white text-black rounded px-4 py-2 font-semibold">+ Nueva mini</button>
+      <button onClick={openCreate} className="bg-white text-black rounded px-4 py-2 font-semibold">+ Nuevo tipo</button>
       <a href="/imports" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">⭳ Importar Excel</a>
       <a href="/inbox" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">✓ Completar</a>
       <a href="/escenarios" className="bg-emerald-400 text-black rounded px-4 py-2 font-semibold">◈ Escenarios</a>
@@ -469,7 +508,7 @@ export default function Dashboard() {
         <div className="flex gap-2 items-center text-sm">
           <button disabled={page <= 1} onClick={() => { const p = page - 1; setPage(p); reload(q, token, p); }}
             className="bg-zinc-800 rounded px-3 py-1 disabled:opacity-40">←</button>
-          <span className="text-xs text-zinc-400">pág {page} de {Math.ceil(total / pageSize)} · {total} minis</span>
+          <span className="text-xs text-zinc-400">pág {page} de {Math.ceil(total / pageSize)} · {total} tipos</span>
           <button disabled={page * pageSize >= total} onClick={() => { const p = page + 1; setPage(p); reload(q, token, p); }}
             className="bg-zinc-800 rounded px-3 py-1 disabled:opacity-40">→</button>
         </div>
@@ -493,7 +532,10 @@ export default function Dashboard() {
             <div><span className={lbl}>Alto / Peso / Base / Diám.</span>{detail.height_mm ?? "—"}mm / {detail.weight_g ?? "—"}g / {detail.radius_of_base_mm ?? "—"}mm / {detail.diameter_mm ?? "—"}mm</div>
             <div><span className={lbl}>Tags</span>{(detail.tags || []).join(", ") || "—"}</div>
             <div><span className={lbl}>Autor / Pintor / Año</span>{detail.designer || "—"} / {detail.painted_by || "—"} / {detail.year || "—"}</div>
+            <div><span className={lbl}>Tamaño / Pintado / Grid</span>{detail.size_category || "—"} / {detail.paint_status || "—"} / {detail.grid_cells ?? 1} cas.</div>
+            <div><span className={lbl}>Rol / Partidas / Fav</span>{detail.role || "—"} / {detail.play_count ?? 0} / {detail.is_favorite ? "★" : "—"}</div>
           </div>
+          {(detail.aliases || []).length > 0 && (<p className="text-xs text-zinc-500 mt-1">Alias: {(detail.aliases || []).join(", ")}</p>)}
           <p className="text-sm mt-3"><span className={lbl}>Historia / lore</span>{detail.story || "Sin historia todavía"}</p>
           {detail.comment && (<p className="text-sm mt-2"><span className={lbl}>Comentario</span>{detail.comment}</p>)}
           <p className="text-xs text-zinc-500 mt-1">Origen: {detail.character_origin || "—"} · Ref: {detail.code_or_reference || "—"}</p>
@@ -508,7 +550,7 @@ export default function Dashboard() {
     {showForm && (
       <div className="fixed inset-0 bg-black/70 overflow-y-auto p-4">
         <form onSubmit={save} className="bg-zinc-950 border border-zinc-800 rounded max-w-2xl mx-auto p-5">
-          <h2 className="text-xl font-bold">{editing ? `Editar ${editing.name}` : "Nueva miniatura — ficha completa"}</h2>
+          <h2 className="text-xl font-bold">{editing ? `Editar ${editing.name}` : "Nuevo tipo — ficha completa"}</h2>
           <p className="text-xs text-zinc-500 mb-3">Todo lo que pongas aquí lo podrá usar después la IA/DM/CV. Solo nombre es obligatorio.</p>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><label className={lbl}>Nombre *</label><input className={inp} value={form.name} onChange={set("name")} placeholder="Ej: Dragón Rojo" /></div>
@@ -531,6 +573,13 @@ export default function Dashboard() {
             <div><label className={lbl}>Marca / sello (label)</label><input className={inp} value={form.label} onChange={set("label")} placeholder="AB!, Reaper…" /></div>
             <div><label className={lbl}>Lore canon</label><select className={inp} value={form.lore_is_canon} onChange={set("lore_is_canon")}><option value="">—</option><option value="true">Sí</option><option value="false">No</option></select></div>
             <div><label className={lbl}>Facción</label><input className={inp} value={form.faction} onChange={set("faction")} /></div>
+            <div><label className={lbl}>Rol en escena (DM)</label><input className={inp} value={form.role} onChange={set("role")} placeholder="tanque, daño, apoyo…" /></div>
+            <div><label className={lbl}>Tamaño (DM)</label><select className={inp} value={form.size_category} onChange={set("size_category")}><option value="">—</option>{SIZE_CATEGORIES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+            <div><label className={lbl}>Pintado</label><select className={inp} value={form.paint_status} onChange={set("paint_status")}><option value="">—</option>{PAINT_STATES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+            <div><label className={lbl}>Casillas grid</label><input type="number" min={1} max={10} className={inp} value={form.grid_cells} onChange={set("grid_cells")} /></div>
+            <div><label className={lbl}>Partidas jugadas</label><input type="number" min={0} className={inp} value={form.play_count} onChange={set("play_count")} /></div>
+            <div><label className={lbl}>Favorita</label><select className={inp} value={form.is_favorite} onChange={set("is_favorite")}><option value="">—</option><option value="true">Sí</option><option value="false">No</option></select></div>
+            <div className="col-span-2"><label className={lbl}>Alias (otros nombres, separados por coma)</label><input className={inp} value={form.aliases} onChange={set("aliases")} placeholder="el vampiro del mar, …" /></div>
             <div><label className={lbl}>Año / Ref</label><div className="flex gap-2"><input className={inp} value={form.year} onChange={set("year")} placeholder="año" /><input className={inp} value={form.code_or_reference} onChange={set("code_or_reference")} placeholder="ref" /></div></div>
             <div className="col-span-2"><label className={lbl}>Origen del personaje</label><input className={inp} value={form.character_origin} onChange={set("character_origin")} /></div>
             <div className="col-span-2"><label className={lbl}>Historia / lore</label><textarea className={inp} rows={3} value={form.story} onChange={set("story")} placeholder="Lore, personalidad, cómo usarla en partida…" /></div>

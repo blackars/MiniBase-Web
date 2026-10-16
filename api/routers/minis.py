@@ -63,6 +63,17 @@ class MiniIn(BaseModel):
   system: Optional[str] = None
   faction: Optional[str] = None
   stats: dict = {}
+  # Campos IA (009): DM agéntico + proyector. Todos opcionales.
+  size_category: Optional[str] = None  # tiny|small|medium|large|huge|gargantuan
+  paint_status: Optional[str] = None  # sin_pintar|base|avanzado|terminada
+  aliases: list[str] = []
+  grid_cells: int = 1
+  role: Optional[str] = None
+  play_count: int = 0
+  is_favorite: Optional[bool] = None
+
+SIZE_CATEGORIES = ["tiny", "small", "medium", "large", "huge", "gargantuan"]
+PAINT_STATES = ["sin_pintar", "base", "avanzado", "terminada"]
 
 def completeness(m: MiniIn) -> int:
   # Ponderación simple P1 (luego agent_tasks la recalcula)
@@ -127,7 +138,24 @@ def tag_facets(request: Request, type: str = ""):
 
 FILTERABLE = ["main_color", "secondary_color", "bioform", "material", "height_mm",
               "radius_of_base_mm", "diameter_mm", "designer", "painted_by", "label",
-              "character_origin", "year"]
+              "character_origin", "year", "size_category", "paint_status"]
+
+@router.get("/stats")
+def collection_stats(request: Request):
+  """Conteo principal por TIPOS únicos + total de piezas (suma quantity).
+  La lista es paginada; este endpoint da los totales en vivo para el header."""
+  if _use_sb():
+    uid = _require_uid(request)
+    try:
+      from services import db as _db
+      return _db.sb_stats(user_id=uid)
+    except HTTPException:
+      raise
+    except Exception as e:
+      raise HTTPException(500, f"stats falló: {e}")
+  n = len(DEMO_STORE)
+  piezas = sum(int((v.get("quantity") or 1)) for v in DEMO_STORE.values())
+  return {"tipos": n, "piezas": piezas, "por_tipo": {}, "mode": "demo-local"}
 
 @router.get("/facets/fields")
 def field_facets(request: Request):
@@ -150,7 +178,8 @@ def list_minis(request: Request, collection_id: str = "default", q: str = "",
                material: str = "", height_mm: str = "", radius_of_base_mm: str = "",
                diameter_mm: str = "",
                designer: str = "", painted_by: str = "", label: str = "",
-               character_origin: str = "", year: str = ""):
+               character_origin: str = "", year: str = "",
+               size_category: str = "", paint_status: str = "", grid_cells: str = ""):
   page = max(1, page)
   page_size = min(100, max(1, page_size))
   tag_list = [t.strip() for t in (tags.split(",") if tags else ([tag] if tag else [])) if t.strip()]
@@ -160,13 +189,21 @@ def list_minis(request: Request, collection_id: str = "default", q: str = "",
     "diameter_mm": diameter_mm,
     "designer": designer, "painted_by": painted_by, "label": label,
     "character_origin": character_origin, "year": year}.items() if v}
+  # Filtros directos sobre la tabla miniatures (no requieren joins).
+  direct = {k: v for k, v in {
+    "size_category": size_category, "paint_status": paint_status}.items() if v}
+  if grid_cells:
+    try:
+      direct["grid_cells"] = int(grid_cells)
+    except (TypeError, ValueError):
+      pass
   if _use_sb():
     try:
       from services import db as _db
       uid = _require_uid(request)
       res = _db.sb_list_minis(q=q, ftype=type, tags=tag_list,
                               page=page, page_size=page_size, user_id=uid,
-                              filters=filters)
+                              filters=filters, direct=direct)
       return {"collection_id": collection_id, "q": q, "items": res["items"],
               "total": res["total"], "page": page, "page_size": page_size,
               "mode": "supabase"}
@@ -192,6 +229,8 @@ def list_minis(request: Request, collection_id: str = "default", q: str = "",
       except (TypeError, ValueError):
         return str(xv) == v
     items = [x for x in items if _match(x)]
+  for k, v in direct.items():
+    items = [x for x in items if str(x.get(k) or "") == str(v)]
   total = len(items)
   return {"collection_id": collection_id, "q": q,
           "items": items[(page - 1) * page_size:page * page_size],
@@ -287,10 +326,39 @@ def delete_mini(mini_id: str, request: Request):
   raise HTTPException(404, "no existe")
 
 @router.get("/{mini_id}/dataset")
-def get_dataset(mini_id: str):
-  # P3: devuelve multi-vista + phash + embedding para CV/DM
-  return {"mini_id": mini_id, "views": [], "embedding": None,
-          "note": "P3: leer public.images + miniatures.embedding"}
+def get_dataset(mini_id: str, request: Request):
+  """Dataset para el DM/CV: ficha + campos IA + vistas + embedding.
+  El DM narra solo con lo que hay aquí (inventario real)."""
+  if _use_sb():
+    uid = _require_uid(request)
+    try:
+      from services import db as _db
+      m = _db.sb_get_mini(mini_id, user_id=uid)
+      sb = _db.client()
+      views = []
+      emb = None
+      try:
+        views = (sb.table("images").select(
+          "view_type,secure_url,width,height,phash")
+          .eq("miniature_id", mini_id).execute().data) or []
+        erow = (sb.table("miniatures").select("embedding")
+                .eq("id", mini_id).limit(1).execute().data or [{}])[0]
+        emb = erow.get("embedding")
+      except Exception as e:
+        print(f"[dataset] views/embedding: {e}")
+      return {"mini_id": mini_id, "ficha": m,
+              "ia": {k: m.get(k) for k in
+                     ("size_category", "paint_status", "aliases", "grid_cells",
+                      "role", "system", "faction", "play_count", "is_favorite")},
+              "views": views, "embedding": emb, "mode": "supabase"}
+    except HTTPException:
+      raise
+    except Exception as e:
+      raise HTTPException(500, f"dataset falló: {e}")
+  if mini_id in DEMO_STORE:
+    return {"mini_id": mini_id, "ficha": DEMO_STORE[mini_id],
+            "views": [], "embedding": None, "mode": "demo-local"}
+  raise HTTPException(404, "no existe")
 
 @router.post("/{mini_id}/images/sign")
 def sign_image(mini_id: str, request: Request, view_type: str = "frontal", collection: str = "default", slug: str = "mini", user: str = "demo"):

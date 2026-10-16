@@ -143,7 +143,11 @@ def sb_create_mini(payload: dict, user_id: str | None = None) -> dict:
     m = sb.table("miniatures").insert({
       "collection_id": col_id, "name": payload["name"], "slug": payload["slug"],
       "type": payload.get("type", "mini"), "quantity": payload.get("quantity", 1),
-      "completeness_score": payload.get("completeness_score", 0)}).execute().data[0]
+      "completeness_score": payload.get("completeness_score", 0),
+      "size_category": payload.get("size_category"),
+      "paint_status": payload.get("paint_status"),
+      "aliases": payload.get("aliases") or [],
+      "grid_cells": payload.get("grid_cells") or 1}).execute().data[0]
     mid = m["id"]
     sb.table("visual_metadata").upsert({
       "miniature_id": mid, "shape": payload.get("shape"), "bioform": payload.get("bioform"),
@@ -160,10 +164,16 @@ def sb_create_mini(payload: dict, user_id: str | None = None) -> dict:
       "story": payload.get("story"), "comment": payload.get("comment"), "year": payload.get("year"),
       "code_or_reference": payload.get("code_or_reference"),
       "url": payload.get("url")}, on_conflict="miniature_id").execute()
-    if payload.get("system") or payload.get("faction"):
+    if payload.get("system") or payload.get("faction") or payload.get("role"):
       sb.table("rpg_profile").upsert({
         "miniature_id": mid, "system": payload.get("system"),
-        "faction": payload.get("faction")}, on_conflict="miniature_id").execute()
+        "faction": payload.get("faction"),
+        "role": payload.get("role")}, on_conflict="miniature_id").execute()
+    sb.table("gameplay_usage").upsert({
+      "miniature_id": mid,
+      "play_count": payload.get("play_count") or 0,
+      "is_favorite": bool(payload.get("is_favorite"))},
+      on_conflict="miniature_id").execute()
     for tid in _ensure_tags(sb, owner_id, tags):
       try:
         sb.table("miniature_tags").insert(
@@ -193,10 +203,15 @@ def sb_get_mini(mid: str, user_id: str | None = None) -> dict:
       out.update({k: lo[0].get(k) for k in
         ("designer", "painted_by", "label", "lore_is_canon", "character_origin", "story", "comment", "year",
          "code_or_reference", "url") if lo[0].get(k) is not None})
-    rp = sb.table("rpg_profile").select("system,faction").eq("miniature_id", mid).limit(1).execute().data
+    rp = sb.table("rpg_profile").select("system,faction,role").eq("miniature_id", mid).limit(1).execute().data
     if rp:
       out["system"] = rp[0].get("system")
       out["faction"] = rp[0].get("faction")
+      out["role"] = rp[0].get("role")
+    gu = sb.table("gameplay_usage").select("play_count,is_favorite").eq("miniature_id", mid).limit(1).execute().data
+    if gu:
+      out["play_count"] = gu[0].get("play_count") or 0
+      out["is_favorite"] = bool(gu[0].get("is_favorite"))
     mt = sb.table("miniature_tags").select("tag_id").eq("miniature_id", mid).execute().data or []
     names = []
     for row in mt:
@@ -282,6 +297,9 @@ def sb_field_facets(user_id: str | None = None) -> dict:
       lrows = sb.table("lore").select(
         "miniature_id," + ",".join(FIELD_FACETS_LORE)).in_("miniature_id", chunk) \
         .execute().data or []
+      # Campos IA de la tabla principal (tamaño/pintado para filtros del DM)
+      mrows = sb.table("miniatures").select("id,size_category,paint_status") \
+        .in_("id", chunk).execute().data or []
       for r in vrows + lrows:
         for k, v in r.items():
           if k == "miniature_id" or v in (None, ""):
@@ -289,6 +307,13 @@ def sb_field_facets(user_id: str | None = None) -> dict:
           key = str(v)
           counts.setdefault(k, {}).setdefault(key, 0)
           counts[k][key] += 1
+      for r in mrows:
+        for k in ("size_category", "paint_status"):
+          v = r.get(k)
+          if v in (None, ""):
+            continue
+          counts.setdefault(k, {}).setdefault(str(v), 0)
+          counts[k][str(v)] += 1
     out = {}
     for k, vals in counts.items():
       items = sorted([{"value": v, "count": c} for v, c in vals.items()],
@@ -300,8 +325,10 @@ def sb_field_facets(user_id: str | None = None) -> dict:
 def sb_list_minis(q: str = "", ftype: str = "", tags: list | None = None,
                   page: int = 1, page_size: int = 24,
                   user_id: str | None = None,
-                  filters: dict | None = None) -> dict:
-  """Lista en 2-3 queries con joins embebidos + total. q busca en nombre y story."""
+                  filters: dict | None = None,
+                  direct: dict | None = None) -> dict:
+  """Lista en 2-3 queries con joins embebidos + total. q busca en nombre y story.
+  direct = filtros eq sobre columnas de miniatures (size_category...)."""
   wanted = list(tags or [])
   extra = {k: v for k, v in (filters or {}).items() if v not in (None, "")}
 
@@ -315,6 +342,9 @@ def sb_list_minis(q: str = "", ftype: str = "", tags: list | None = None,
       .eq("collection_id", col_id).order("name")
     if ftype:
       query = query.eq("type", ftype)
+    for k, v in (direct or {}).items():
+      if v not in (None, ""):
+        query = query.eq(k, v)
     if q:
       query = query.or_(f"name.ilike.%{q}%,slug.ilike.%{q}%")
     if wanted:
@@ -428,7 +458,11 @@ def sb_update_mini(mid: str, payload: dict, user_id: str | None = None) -> dict:
     sb.table("miniatures").update({
       "name": payload["name"], "slug": payload["slug"], "type": payload.get("type", "mini"),
       "quantity": payload.get("quantity", 1),
-      "completeness_score": payload.get("completeness_score", 0)}).eq("id", mid).execute()
+      "completeness_score": payload.get("completeness_score", 0),
+      "size_category": payload.get("size_category"),
+      "paint_status": payload.get("paint_status"),
+      "aliases": payload.get("aliases") or [],
+      "grid_cells": payload.get("grid_cells") or 1}).eq("id", mid).execute()
     sb.table("visual_metadata").upsert({
       "miniature_id": mid, "shape": payload.get("shape"), "bioform": payload.get("bioform"),
       "material": payload.get("material"), "main_color": payload.get("main_color"),
@@ -444,10 +478,16 @@ def sb_update_mini(mid: str, payload: dict, user_id: str | None = None) -> dict:
       "story": payload.get("story"), "comment": payload.get("comment"), "year": payload.get("year"),
       "code_or_reference": payload.get("code_or_reference"),
       "url": payload.get("url")}, on_conflict="miniature_id").execute()
-    if payload.get("system") or payload.get("faction"):
+    if payload.get("system") or payload.get("faction") or payload.get("role"):
       sb.table("rpg_profile").upsert({
         "miniature_id": mid, "system": payload.get("system"),
-        "faction": payload.get("faction")}, on_conflict="miniature_id").execute()
+        "faction": payload.get("faction"),
+        "role": payload.get("role")}, on_conflict="miniature_id").execute()
+    sb.table("gameplay_usage").upsert({
+      "miniature_id": mid,
+      "play_count": payload.get("play_count") or 0,
+      "is_favorite": bool(payload.get("is_favorite"))},
+      on_conflict="miniature_id").execute()
     if user_id:
       _, owner = get_user_collection(user_id)
     else:
@@ -470,4 +510,37 @@ def sb_delete_mini(mid: str, user_id: str | None = None):
       own = sb.table("miniatures").select("id").eq("id", mid).eq("collection_id", col_id).limit(1).execute().data
       assert own, "no es tuya"
     sb.table("miniatures").delete().eq("id", mid).execute()
+  return _with_retry(_op)
+
+def sb_stats(user_id: str | None = None) -> dict:
+  """Totales por TIPOS únicos + piezas (suma de quantity), global y por tipo.
+  709 tipos != 972 piezas: el conteo principal es tipos, piezas es informativo."""
+  def _op(sb):
+    col_id, _ = _resolve_scope(user_id)
+    if not col_id:
+      return {"tipos": 0, "piezas": 0, "por_tipo": {}, "mode": "supabase"}
+    tipos = 0
+    piezas = 0
+    por_tipo: dict = {}
+    off = 0
+    while True:
+      page = sb.table("miniatures").select("type,quantity") \
+        .eq("collection_id", col_id).order("id") \
+        .range(off, off + 999).execute().data or []
+      if not page:
+        break
+      off += len(page)
+      for r in page:
+        t = r.get("type") or "mini"
+        try:
+          qtd = int(r.get("quantity") or 1)
+        except (TypeError, ValueError):
+          qtd = 1
+        tipos += 1
+        piezas += qtd
+        e = por_tipo.setdefault(t, {"tipos": 0, "piezas": 0})
+        e["tipos"] += 1
+        e["piezas"] += qtd
+    return {"tipos": tipos, "piezas": piezas,
+            "por_tipo": por_tipo, "mode": "supabase"}
   return _with_retry(_op)

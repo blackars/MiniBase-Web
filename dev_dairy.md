@@ -334,3 +334,105 @@ vivían solo en Supabase, sin clon consultable.
 - Pendiente: `Run workflow` manual en `keepalive-supabase` y `backup-excel` para
   verificar el primer backup commiteado; comprobar que `MiniBase_latest.xlsx`
   abre en preview web.
+
+---
+
+## 12. Sesión 2026-10-16 — conteo por tipos + campos IA para el DM (plan aprobado)
+
+Decisión del usuario: el conteo principal son **tipos únicos** (709), no piezas
+(972). Sin la palabra "mini" en la UI. `626 & 624` (Lilo & Stitch) y `R2D2`
+(Star Wars) son nombres reales: se quedan.
+
+### 12.1 Limpieza (EJECUTADA en Supabase)
+- `api/services/curate.py` (nuevo): `CURATED_NAMES` + `curate_name()` — mapa
+  nombre-Excel → nombre oficial, aplicado ANTES de slugificar en los 2 caminos
+  de importación (`bulk_direct` y legacy `imports.py`), así un Excel viejo
+  re-subido hace match con la fila curada en vez de duplicar/revertir.
+- `api/scripts/curate_names.py` (nuevo, idempotente, verifica slugs libres).
+  Ejecutado: `1, 2, 3…9, 0` → `Números 0-9` (`numeros-0-9`, token ×10);
+  `A,B, C, D, E, F` → `Letras A-F` (`letras-a-f`, token ×6).
+- Duplicados revisados: los 10 grupos ya están bien versionados v2/v3
+  (Star Vampire ×3, Hombre Lobo ×3, etc.), 0 acciones. Par Dracula/Drácula por
+  tilde ya resuelto como `dracula` + `dracula-v2`.
+
+### 12.2 Migración 009 (CREADA, pendiente correr en SQL Editor)
+- `supabase/migrations/009_campos_ia.sql`: `miniatures.size_category`
+  (tiny…gargantuan), `paint_status` (sin_pintar/base/avanzado/terminada),
+  `aliases text[]`, `grid_cells` (1–10); `rpg_profile.role`;
+  `gameplay_usage.play_count/is_favorite/last_used_at` + 2 índices.
+- `ubicación física` descartada a petición (varía mucho en el apartamento).
+- Todo nullable/opcional: 0 riesgo para las 709 filas.
+
+### 12.3 API (código listo, exige 009 aplicada)
+- `MiniIn` + `sb_create/get/update/list` con los 7 campos; `rpg_profile.role`;
+  `gameplay_usage` con upsert; `GET /api/minis/stats` → `sb_stats()`
+  (verificado: 709 tipos, 972 piezas: 596+197+179).
+- `list_minis`: filtros directos `size_category/paint_status/grid_cells` (+ demo).
+- `GET /{id}/dataset` deja de ser stub: ficha + bloque `ia` + vistas + embedding.
+- `imports.py`: grupo `ia` en CANON + 20 alias ES/EN + `clean_list()` (alias sin
+  canonicalizar); cleaners int/bool para grid/play/favorito en ambos caminos.
+- `bulk_direct.py`: conserva nuevos campos en merge, los escribe en
+  insert/update, y ahora SÍ guarda `rpg_profile` + `gameplay_usage` en bulk
+  (antes los ignoraba). `export_backup.py` incluye las 4 columnas nuevas.
+- OJO: hasta correr 009, no re-correr bulk ni export (SELECT con columnas
+  inexistentes falla). El backup de Actions en main sigue con código viejo:
+  funciona igual hasta pushear esto + aplicar 009.
+
+### 12.4 Web (código listo)
+- `page.tsx`: header `{tipos} tipos · {piezas} piezas` vía `/stats` (carga en
+  login/restaurar/guardar/borrar); `+ Nuevo tipo`; paginación en tipos;
+  formulario con Tamaño/Pintado/Alias/Casillas/Rol/Partidas/Favorita;
+  filtros Tamaño + Pintado (13 campos); detalle muestra bloque IA + alias.
+- `inbox`: "actualiza el tipo"; `minis/[id]`: "Tipo {id}".
+- Verificado: `py_compile` OK (9 archivos), `tsc --noEmit` limpio.
+
+### 12.5 Backfill (script listo, correr DESPUÉS de 009)
+- `api/scripts/backfill_ia.py [--dry-run]`: tamaño por bandas de altura
+  (tiny<15, small<28, medium<55, large<110, huge<220, si no gargantuan);
+  grid por diámetro/peana (≤32→1, ≤60→2, ≤120→3, si no 4);
+  facción NO se infiere (texto libre por sistema) → va al Inbox.
+  Regenera `missing_fields` abiertos de los 4 campos para curado manual.
+- Siguiente: usuario corre 009 → yo corro backfill + prueba end-to-end
+  (reiniciar API, header, filtros, dataset) → commit/push.
+
+### 12.6 Backfill + end-to-end EJECUTADOS (009 aplicada por el usuario)
+- `backfill_ia.py` falló 2 veces antes del OK, ambas corregidas en el script:
+  1) medidas en `visual_metadata` (no en `miniatures`) → JOIN agregado;
+  2) ~900 UPDATEs secuenciales superaban 120 s → `execute_values` en batch;
+  3) `uuid = text` → cast `::uuid` + UUIDs nativos en missing.
+  Resultado: 517 `size_category`, 359 `grid_cells`>1, 2319 faltantes nuevos
+  (medium) al Inbox. Facción no inferida (texto libre por sistema).
+- Export con columnas nuevas OK: 827 KB, 12.537 filas (verificado en temp,
+  no commiteado).
+- API: había un uvicorn VIEJO (PID 14732, del 15/10) ocupando :8000 — el primer
+  test dio código viejo. Kill + arranque desde `MiniBase-Web/api`.
+  **Hallazgo: `api_INICIAR.bat` apunta al árbol viejo (`MINIBASE\MiniBase\api`);
+  hay que actualizarlo o seguirá levantando código obsoleto.**
+- End-to-end autenticado OK: `/stats` → 709 tipos / 972 piezas;
+  filtro `size_category=medium` → 430; `dataset` con bloque `ia` completo;
+  CREATE con los 7 campos → GET los devuelve → facetas IA presentes →
+  DELETE limpió la fila de prueba. Guardias 401 sin token OK.
+- `sb_field_facets` extendido a `size_category/paint_status` (si no, los
+  selects Tamaño/Pintado salían vacíos); API reiniciada (nuevo PID).
+- Pendiente: probar en navegador (header tipos/piezas, formulario, filtros),
+  actualizar `api_INICIAR.bat`, commit/push.
+
+### 12.7 Servidores apuntaban al árbol viejo (CORREGIDO)
+- Causa del reporte "no salen las opciones / header viejo": la web en :3000
+  corría desde `MINIBASE\MiniBase\web` (PIDs 7276/4496, del 15/10), igual que
+  había pasado con la API. Ambos `.bat` apuntaban al árbol viejo.
+- `api_INICIAR.bat` y `web_INICIAR.bat` corregidos a `MiniBase-Web/...`.
+- Procesos viejos matados; web nueva levantada desde `MiniBase-Web\web`
+  (verificado: :3000 responde, página compila). API :8000 OK.
+- OJO navegador: hacer Ctrl+Shift+R (caché) para ver "709 tipos · 972 piezas".
+
+### 12.8 Fixes foto + guardado
+- Subida Cloudinary 403 `missing permissions (create)`: la key tenía rol
+  Media Library User. Usuario la pasó a Master Admin → upload+destroy de
+  prueba OK. Añadido hint en la UI cuando salga ese error.
+- `Error al guardar: [object Object]`: era un 422 Pydantic
+  (`body.is_favorite: Input should be a valid boolean`) — el form envía
+  `is_favorite: null` con el select en "—" y `MiniIn` lo exigía `bool`.
+  Fix: `Optional[bool]`. Además `errText()` formatea detail (string, lista
+  de validación o JSON) para que ningún error vuelva a verse como objeto.
+  Verificado: mismo payload que fallaba ahora PUT 200. API reiniciada.
