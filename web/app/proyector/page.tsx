@@ -89,7 +89,7 @@ export default function Proyector() {
     const rd = new FileReader();
     rd.onload = () => {
       try { setImg(String(rd.result)); }
-      catch { setMsg("Imagen muy pesada para sincronizar; usa una más liviana."); }
+      catch { setMsg("Image too heavy to sync; use a lighter one."); }
     };
     rd.readAsDataURL(f);
   }
@@ -132,16 +132,16 @@ export default function Proyector() {
         const second = screens.find((s: any) => !s.isPrimary) || screens[1];
         const w = window.open(`${location.origin}/proyector?pop=1`, "_blank",
           `left=${second.availLeft},top=${second.availTop},width=${second.availWidth},height=${second.availHeight}`);
-        if (w) { setMsg(`Proyección enviada a: ${second.label || "segunda pantalla"}`); return; }
+        if (w) { setMsg(`Projection sent to: ${second.label || "second screen"}`); return; }
       }
     } catch {}
     try {
       await boxRef.current?.requestFullscreen();
-      setMsg("Fullscreen local (sin API multi-pantalla en este navegador).");
-    } catch { setMsg("El navegador bloqueó el fullscreen."); }
+      setMsg("Local fullscreen (no multi-screen API in this browser).");
+    } catch { setMsg("Browser blocked fullscreen."); }
   }
 
-  if (!ok) return (<main className="p-6"><p className="text-zinc-500 text-sm">Verificando acceso…</p></main>);
+  if (!ok) return (<main className="p-6"><p className="text-zinc-500 text-sm">Checking access…</p></main>);
 
   // Modo ventana emergente en la 2da pantalla: solo lienzo (lo controla la principal)
   if (typeof window !== "undefined" && new URLSearchParams(location.search).get("pop") === "1") {
@@ -153,43 +153,43 @@ export default function Proyector() {
   const cellPx = cellCm * baseEff;
 
   return (<main className="p-6 max-w-6xl mx-auto">
-    <a href="/escenarios" className="text-zinc-400 text-sm">← Escenarios</a>
-    <h1 className="text-2xl font-bold mt-2">◉ Proyector</h1>
+    <a href="/escenarios" className="text-zinc-400 text-sm">← Scenarios</a>
+    <h1 className="text-2xl font-bold mt-2">◉ Projector</h1>
     <p className="text-xs text-zinc-500 mt-1">
-      Pantallas detectadas: {screens.length || "API no disponible (usa fullscreen manual)"}
+      Detected screens: {screens.length || "API unavailable (use manual fullscreen)"}
       {screens.map((s: any, i: number) => (
-        <span key={i} className="ml-2">{s.label || `pantalla ${i + 1}`} {s.isPrimary ? "(principal)" : ""} {s.width}x{s.height}</span>))}
+        <span key={i} className="ml-2">{s.label || `screen ${i + 1}`} {s.isPrimary ? "(primary)" : ""} {s.width}x{s.height}</span>))}
     </p>
 
     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
       <div className="bg-zinc-900 border border-zinc-800 rounded p-3 space-y-2">
-        <label className="text-xs text-zinc-400 block">Escenario (trae celda/color)
+        <label className="text-xs text-zinc-400 block">Scenario (brings cell/color)
           <select value={sel?.id || ""} onChange={e => pickScn(e.target.value)}
             className="mt-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-2 w-full text-sm">
-            <option value="">— ninguno —</option>
+            <option value="">— none —</option>
             {scns.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select></label>
-        <label className="text-xs text-zinc-400 block">Imagen a proyectar
+        <label className="text-xs text-zinc-400 block">Image to project
           <input type="file" accept="image/*" onChange={onFile}
             className="mt-1 text-xs text-zinc-300" /></label>
-        <label className="text-xs text-zinc-400 block">Ancho físico del monitor (cm) — calibración tamaño real
+        <label className="text-xs text-zinc-400 block">Physical monitor width (cm) — real-size calibration
           <input type="number" step="any" value={screenWcm || ""} onChange={e => saveCal(Number(e.target.value))}
-            placeholder="ej. 52 para 24&quot;" className="mt-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-2 w-full text-sm" /></label>
+            placeholder="e.g. 52 for 24&quot;" className="mt-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-2 w-full text-sm" /></label>
         <p className="text-xs text-zinc-500">
-          {calibrated ? `Medido: ${baseEff.toFixed(1)} px/cm → celda ${cellCm}cm = ${cellPx.toFixed(0)}px` : `Estimado 96dpi: celda ${cellCm}cm = ${cellPx.toFixed(0)}px (calibra para exactitud). Tecla G = rejilla.`}
+          {calibrated ? `Measured: ${baseEff.toFixed(1)} px/cm → cell ${cellCm}cm = ${cellPx.toFixed(0)}px` : `Estimated 96dpi: cell ${cellCm}cm = ${cellPx.toFixed(0)}px (calibrate for accuracy). G key = grid.`}
         </p>
-        <label className="text-xs text-zinc-400 block">Celda rejilla (cm, decimales)
+        <label className="text-xs text-zinc-400 block">Grid cell (cm, decimals)
           <input type="number" step="any" value={cellCm} onChange={e => setCellCm(Number(e.target.value))}
             className="mt-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-2 w-full text-sm" /></label>
-        <label className="text-xs text-zinc-400 block">Zoom escenario: {zoom.toFixed(2)}x
+        <label className="text-xs text-zinc-400 block">Scenario zoom: {zoom.toFixed(2)}x
           <input type="range" min="0.25" max="4" step="0.05" value={zoom} onChange={e => setZoom(Number(e.target.value))}
             className="w-full" /></label>
         <div className="flex gap-2 flex-wrap">
           <button onClick={() => setShowGrid(!showGrid)}
             className={`text-sm rounded px-3 py-2 font-semibold ${showGrid ? "bg-emerald-400 text-black" : "bg-zinc-800 border border-zinc-700"}`}>
-            {showGrid ? "⛶ Rejilla ON" : "⛶ Rejilla OFF"}</button>
+            {showGrid ? "⛶ Grid ON" : "⛶ Grid OFF"}</button>
           <button onClick={openSecond} className="text-sm bg-white text-black rounded px-3 py-2 font-semibold">
-            ⧉ Enviar a 2da pantalla</button>
+            ⧉ Send to 2nd screen</button>
         </div>
         {msg && <p className="text-xs text-amber-400">{msg}</p>}
       </div>
@@ -200,13 +200,13 @@ export default function Proyector() {
           {img ? <img src={img} alt="" draggable={false} className="absolute inset-0 w-full h-full object-contain pointer-events-none"
             style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} /> : (
             <div className="absolute inset-0 flex items-center justify-center text-zinc-600 text-sm">
-              Carga una imagen del escenario
+              Load a scenario image
             </div>)}
           {showGrid && <GridOverlay cellPx={cellPx} color={sel?.grid_color || "#22ff88"} opacity={sel?.grid_opacity ?? 0.6} />}
         </div>
         <p className="text-xs text-zinc-500 mt-1">
-          {cellPx ? `Celda a tamaño real: ${cellCm} cm = ${cellPx.toFixed(0)} px en este monitor.` : "Calibra el monitor para tamaño real exacto."}
-          {" "}Arrastra para explorar · <button onClick={recenter} className="underline">recentrar</button>
+          {cellPx ? `Real-size cell: ${cellCm} cm = ${cellPx.toFixed(0)} px on this monitor.` : "Calibrate the monitor for exact real size."}
+          {" "}Drag to explore · <button onClick={recenter} className="underline">recenter</button>
         </p>
       </div>
     </div>
@@ -237,7 +237,7 @@ function PopCanvas() {
     {st.img ? <img src={st.img} alt="" className="absolute inset-0 w-full h-full object-contain"
       style={{ transform: `translate(${pp.x}px, ${pp.y}px) scale(${st.zoom || 1})` }} /> : (
       <div className="absolute inset-0 flex items-center justify-center text-zinc-600 text-sm">
-        Esperando imagen desde la ventana principal… (pulsa G allí para la rejilla)
+        Waiting for image from the main window… (press G there for the grid)
       </div>)}
     {st.showGrid && <GridOverlay cellPx={cellPx} color={st.color || "#22ff88"} opacity={st.opacity ?? 0.6} />}
   </div>);

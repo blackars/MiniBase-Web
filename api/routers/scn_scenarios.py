@@ -142,8 +142,18 @@ def delete_scenario(sid: str, request: Request):
   if not sb.table("scn_scenarios").select("id").eq("id", sid) \
       .eq("collection_id", _col(sb, uid)).limit(1).execute().data:
     raise HTTPException(404, "no existe")
+  # captura los assets reales en Cloudinary ANTES de borrar las filas
+  try:
+    assets = sb.table("scn_assets").select("cloudinary_public_id") \
+      .eq("scenario_id", sid).execute().data or []
+  except Exception:
+    assets = []
   sb.table("scn_scenarios").delete().eq("id", sid).execute()
-  return {"deleted": sid}
+  from services.cloudinary_ops import cleanup_assets
+  cleaned = cleanup_assets([a["cloudinary_public_id"] for a in assets
+                            if a.get("cloudinary_public_id")])
+  return {"deleted": sid, "cloudinary_deleted": cleaned,
+          "cloudinary_expected": len(assets)}
 
 @router.get("/{sid}/dataset")
 def scenario_dataset(sid: str, request: Request):

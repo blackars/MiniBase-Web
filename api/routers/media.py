@@ -137,12 +137,16 @@ def delete_image(image_id: str, request: Request):
   from services import db as _db
   uid = _uid(request)
   sb = _db.client()
-  rows = sb.table("images").select("id,miniature_id").eq("id", image_id).limit(1).execute().data
+  rows = sb.table("images").select("id,miniature_id,cloudinary_public_id") \
+    .eq("id", image_id).limit(1).execute().data
   if not rows:
     raise HTTPException(404, "no existe")
   _own_mini(sb, uid, rows[0]["miniature_id"])
   sb.table("images").delete().eq("id", image_id).execute()
-  return {"deleted": image_id}
+  # borra también el archivo real (y sus derivados) en Cloudinary
+  from services.cloudinary_ops import destroy_asset
+  ok = destroy_asset(rows[0].get("cloudinary_public_id"))
+  return {"deleted": image_id, "cloudinary_deleted": ok}
 
 class BackupAttach(BaseModel):
   image_id: str

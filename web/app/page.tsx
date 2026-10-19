@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase, hasSupabase, SUPABASE_URL, SUPABASE_KEY } from "../lib/supabase";
+import { toWebP } from "../lib/optimize";
 
 // Login manual por REST (sin GoTrue): el wrapper JS de auth rompe `fetch` en este
 // entorno, pero el endpoint /auth/v1 responde bien. Sesión en localStorage.
@@ -29,14 +30,14 @@ const TYPES = ["mini", "scenery", "token", "tile", "prop"];
 const SIZE_CATEGORIES = ["tiny", "small", "medium", "large", "huge", "gargantuan"];
 const PAINT_STATES = ["sin_pintar", "base", "avanzado", "terminada"];
 const FILTER_FIELDS = [
-  { k: "main_color", label: "Color princ." }, { k: "secondary_color", label: "Color sec." },
-  { k: "bioform", label: "Bioforma" }, { k: "material", label: "Material" },
-  { k: "height_mm", label: "Altura mm" }, { k: "radius_of_base_mm", label: "Base mm" },
-  { k: "diameter_mm", label: "Diámetro mm" },
-  { k: "size_category", label: "Tamaño" }, { k: "paint_status", label: "Pintado" },
-  { k: "designer", label: "Diseñador" }, { k: "painted_by", label: "Pintor" },
-  { k: "label", label: "Marca/sello" }, { k: "character_origin", label: "Origen" },
-  { k: "year", label: "Año" },
+  { k: "main_color", label: "Main color" }, { k: "secondary_color", label: "Secondary color" },
+  { k: "bioform", label: "Bioform" }, { k: "material", label: "Material" },
+  { k: "height_mm", label: "Height mm" }, { k: "radius_of_base_mm", label: "Base mm" },
+  { k: "diameter_mm", label: "Diameter mm" },
+  { k: "size_category", label: "Size" }, { k: "paint_status", label: "Painted" },
+  { k: "designer", label: "Designer" }, { k: "painted_by", label: "Painter" },
+  { k: "label", label: "Brand/stamp" }, { k: "character_origin", label: "Origin" },
+  { k: "year", label: "Year" },
 ];
 
 function errText(j: any, status: number) {
@@ -121,10 +122,16 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
   useEffect(() => { load(); }, [mini.id]);
 
   async function upload(e: any) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (f.size > 10 * 1024 * 1024) { setMsg("Máx 10MB por foto."); return; }
-    setBusy(true); setMsg("Firmando…");
+    const raw = e.target.files?.[0];
+    if (!raw) return;
+    if (raw.size > 10 * 1024 * 1024) { setMsg("Max 10MB per photo."); return; }
+    setBusy(true);
+    // Paso previo de optimización: convierte a WebP (calidad 0.9) antes de subir
+    // para que Cloudinary almacene y sincronice menos bytes cada foto.
+    setMsg("Optimizing to WebP…");
+    const f = await toWebP(raw);
+    if (f.size > 10 * 1024 * 1024) { setBusy(false); setMsg("Max 10MB per photo."); return; }
+    setMsg("Signing…");
     try {
       // 1. Firma (el backend genera derivados WebP vía eager)
       const s = await (await fetch(
@@ -132,7 +139,7 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
         { method: "POST", headers: H })).json();
       if (s.demo) throw new Error("Cloudinary sin configurar");
       // 2. Subida directa navegador → Cloudinary
-      setMsg("Subiendo…");
+      setMsg("Uploading…");
       const fd = new FormData();
       fd.append("file", f);
       fd.append("api_key", s.api_key);
@@ -140,12 +147,13 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
       fd.append("public_id", s.public_id);
       fd.append("folder", s.folder);
       fd.append("eager", s.eager);
+      if (s.transformation) fd.append("transformation", s.transformation);
       fd.append("signature", s.signature);
       const up = await (await fetch(s.upload_url, { method: "POST", body: fd })).json();
       if (up.error) throw new Error(up.error.message);
       const webp = (up.eager && up.eager[0] && up.eager[0].secure_url) || up.secure_url;
       // 3. Registrar en MiniBase (WebP como canonical)
-      setMsg("Guardando…");
+      setMsg("Saving…");
       const c = await fetch(`${api}/api/images/complete`, {
         method: "POST", headers: { ...H, "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -161,15 +169,18 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
     } catch (err: any) {
       let m = String(err?.message || err);
       if (m.includes("missing permissions"))
-        m += " → En Cloudinary: Settings → API Keys → tu key → activa el permiso Upload, guarda y reintenta.";
+        m += " → In Cloudinary: Settings → API Keys → your key → enable the Upload permission, save and retry.";
       setMsg(m);
     }
     finally { setBusy(false); e.target.value = ""; }
   }
 
   async function del(id: string) {
-    if (!confirm("¿Borrar esta imagen?")) return;
-    await fetch(`${api}/api/images/${id}`, { method: "DELETE", headers: H });
+    if (!confirm("Delete this image?")) return;
+    const r = await fetch(`${api}/api/images/${id}`, { method: "DELETE", headers: H });
+    const j = await r.json().catch(() => ({}));
+    if (j.cloudinary_deleted && !["ok", "not found"].includes(j.cloudinary_deleted))
+      setMsg(`Cloudinary cleanup: ${j.cloudinary_deleted} (el archivo puede seguir en el cloud)`);
     load();
   }
   async function attachBackup(id: string) {
@@ -191,29 +202,29 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
     </div>);
   }
 
-  if (!gal) return (<p className="text-xs text-zinc-500 mt-3">Cargando galería…</p>);
+  if (!gal) return (<p className="text-xs text-zinc-500 mt-3">Loading gallery…</p>);
   return (<div className="mt-3">
     <div className="flex items-center gap-2">
-      <span className="text-xs font-bold">Fotos {gal.photos.length}/13 {gal.cv_ready ? <span className="text-emerald-400">· CV-ready ✓</span> : <span className="text-zinc-500">· faltan {3 - gal.photos.length} para CV</span>}</span>
+      <span className="text-xs font-bold">Photos {gal.photos.length}/13 {gal.cv_ready ? <span className="text-emerald-400">· CV-ready ✓</span> : <span className="text-zinc-500">· {3 - gal.photos.length} more for CV</span>}</span>
     </div>
     <div className="grid grid-cols-4 gap-1 mt-1">{gal.photos.map(thumb)}</div>
-    {gal.photos.length === 0 && <p className="text-xs text-zinc-500 mt-1">Sin fotos todavía.</p>}
+    {gal.photos.length === 0 && <p className="text-xs text-zinc-500 mt-1">No photos yet.</p>}
     {(gal.references.length > 0 || gal.videos.length > 0) && (
-      <div className="mt-2"><span className="text-xs font-bold text-zinc-400">Referencia (no entrena)</span>
+      <div className="mt-2"><span className="text-xs font-bold text-zinc-400">Reference (does not train)</span>
         <div className="grid grid-cols-4 gap-1 mt-1">{[...gal.references, ...gal.videos].map(thumb)}</div></div>)}
     <div className="flex gap-1 mt-2 items-center flex-wrap">
       <select value={view} onChange={e => setView(e.target.value)} className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs">
-        <optgroup label="Foto (entrena)">{PHOTO_VIEWS.map(v => <option key={v} value={v}>{v}</option>)}</optgroup>
-        <optgroup label="Referencia (no entrena)">{REF_VIEWS.map(v => <option key={v} value={v}>{v}</option>)}</optgroup>
+        <optgroup label="Photo (trains)">{PHOTO_VIEWS.map(v => <option key={v} value={v}>{v}</option>)}</optgroup>
+        <optgroup label="Reference (does not train)">{REF_VIEWS.map(v => <option key={v} value={v}>{v}</option>)}</optgroup>
       </select>
       <label className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 cursor-pointer">
-        {busy ? "…" : "📷 Subir foto"}
+        {busy ? "…" : "📷 Upload photo"}
         <input type="file" accept="image/*" className="hidden" onChange={upload} disabled={busy} />
       </label>
     </div>
     {msg && <p className="text-xs text-amber-400 mt-1">{msg}</p>}
     <div className="flex gap-1 mt-2 items-center">
-      <input value={drive} onChange={e => setDrive(e.target.value)} placeholder="Pegar link Drive (bóveda) para la última foto…"
+      <input value={drive} onChange={e => setDrive(e.target.value)} placeholder="Paste Drive link (vault) for the latest photo…"
         className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs" />
       <button onClick={() => gal.photos.length && attachBackup(gal.photos[gal.photos.length - 1].id)}
         className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1">💾</button>
@@ -224,7 +235,7 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
 export default function Dashboard() {
   const [minis, setMinis] = useState<any[]>([]);
   const [q, setQ] = useState("");
-  const [apiOk, setApiOk] = useState("probando…");
+  const [apiOk, setApiOk] = useState("checking…");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
   const [form, setForm] = useState<any>(EMPTY);
@@ -255,7 +266,7 @@ export default function Dashboard() {
   }
 
   useEffect(() => {
-    fetch(`${API}/health`).then(() => setApiOk("API conectada")).catch(() => setApiOk("API apagada"));
+    fetch(`${API}/health`).then(() => setApiOk("API connected")).catch(() => setApiOk("API offline"));
     // Restaura sesión guardada y valídala contra /auth/v1/user.
     // Sin sesión NO se carga nada de la app (landing de auth primero).
     (async () => {
@@ -360,8 +371,8 @@ export default function Dashboard() {
   // Registro BLOQUEADO: solo entra la cuenta existente (miniaturesab).
   // Para abrir registro en el futuro: restLogin(..., "up") + deshabilitar RLS de signup.
   async function doLogin() {
-    if (!lemail || !lpass) { setLoginMsg("Escribe correo y contraseña."); return; }
-    setLoginMsg("Verificando…");
+    if (!lemail || !lpass) { setLoginMsg("Enter email and password."); return; }
+    setLoginMsg("Checking…");
     try {
       const { ok, status, data } = await restLogin(lemail, lpass, "in");
       if (!ok) {
@@ -375,7 +386,7 @@ export default function Dashboard() {
       setUser(data.user); setToken(data.access_token);
       setLoginMsg(""); reload("", data.access_token); loadFacets(data.access_token, ""); loadFieldFacets(data.access_token); loadStats(data.access_token);
     } catch (e: any) {
-      setLoginMsg("Sin conexión a Supabase: " + (e?.message || e));
+      setLoginMsg("No connection to Supabase: " + (e?.message || e));
     }
   }
   async function doLogout() {
@@ -391,17 +402,22 @@ export default function Dashboard() {
   function openEdit(m: any) { setEditing(m); setForm(fromRec(m)); setShowForm(true); setDetail(null); }
   async function save(e: any) {
     e.preventDefault();
-    if (!form.name.trim()) return alert("El nombre es obligatorio");
+    if (!form.name.trim()) return alert("Name is required");
     const payload = toPayload(form);
     const url = editing ? `${API}/api/minis/${editing.id}` : `${API}/api/minis`;
     const r = await fetch(url, { method: editing ? "PUT" : "POST", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(payload) });
-    if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error al guardar: " + errText(j, r.status)); }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error saving: " + errText(j, r.status)); }
     setShowForm(false); reload(q, token, page); loadFacets(token, ftype); loadFieldFacets(token); loadStats(token);
   }
   async function remove(m: any) {
-    if (!confirm(`¿Borrar ${m.name}?`)) return;
+    if (!confirm(`Delete ${m.name}?`)) return;
     const r = await fetch(`${API}/api/minis/${m.id}`, { method: "DELETE", headers: authHeaders() });
-    if (!r.ok) { const j = await r.json().catch(() => ({})); return alert("Error al borrar: " + errText(j, r.status)); }
+    const j = await r.json().catch(() => ({}));
+    if (typeof j.cloudinary_deleted === "number" &&
+        j.cloudinary_deleted < (j.cloudinary_expected ?? 0))
+      alert(`Deleted, but Cloudinary cleanup did not complete (` +
+            `${j.cloudinary_deleted}/${j.cloudinary_expected} files).`);
+    if (!r.ok) { return alert("Error deleting: " + errText(j, r.status)); }
     setDetail(null); setShowForm(false); reload(q, token, page); loadFacets(token, ftype); loadFieldFacets(token); loadStats(token);
   }
   const set = (k: string) => (e: any) => setForm({ ...form, [k]: e.target.value });
@@ -409,21 +425,21 @@ export default function Dashboard() {
   const lbl = "text-xs text-zinc-400 mb-1 block";
 
   if (checking) return (<main className="min-h-screen flex items-center justify-center mb-sharp">
-    <p className="text-zinc-500 text-sm">Verificando sesión…</p>
+    <p className="text-zinc-500 text-sm">Checking session…</p>
   </main>);
 
   // PUERTA TOTAL: sin sesión no se renderiza nada de la app (ni buscador ni tipos).
   if (!user) return (<main className="min-h-screen flex items-center justify-center p-6 mb-sharp">
     <div className="bg-zinc-900 border border-zinc-800 rounded p-6 w-full max-w-sm">
       <h1 className="text-2xl font-bold">MiniBase Web</h1>
-      <p className="text-xs text-zinc-500 mt-1">Acceso privado — {apiOk}</p>
-      <input value={lemail} onChange={e => setLemail(e.target.value)} placeholder="tu@correo.com" type="email"
+      <p className="text-xs text-zinc-500 mt-1">Private access — {apiOk}</p>
+      <input value={lemail} onChange={e => setLemail(e.target.value)} placeholder="you@email.com" type="email"
         onKeyDown={e => e.key === "Enter" && doLogin()}
         className="mt-4 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 outline-none w-full text-sm" />
-      <input value={lpass} onChange={e => setLpass(e.target.value)} placeholder="contraseña" type="password"
+      <input value={lpass} onChange={e => setLpass(e.target.value)} placeholder="password" type="password"
         onKeyDown={e => e.key === "Enter" && doLogin()}
         className="mt-2 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 outline-none w-full text-sm" />
-      <button onClick={() => doLogin()} className="mt-3 bg-white text-black rounded px-4 py-2 text-sm font-semibold w-full">Entrar</button>
+      <button onClick={() => doLogin()} className="mt-3 bg-white text-black rounded px-4 py-2 text-sm font-semibold w-full">Sign in</button>
       {loginMsg && <p className="text-xs text-amber-400 mt-2">{loginMsg}</p>}
     </div>
   </main>);
@@ -432,32 +448,32 @@ export default function Dashboard() {
     <div className="flex items-start justify-between gap-4 flex-wrap">
       <h1 className="text-3xl font-bold flex items-center gap-3"><Logo />MiniBase Web</h1>
       <div className="bg-zinc-900 border border-zinc-800 px-3 py-2 text-xs text-zinc-400 text-right">
-        <p className="text-zinc-500">API: {apiOk} · {stats ? `${stats.tipos} tipos · ${stats.piezas} piezas` : `${total} tipos`} · Supabase nube · <a className="underline" href={`${API}/docs`} target="_blank">Swagger</a></p>
-        <p className="mt-1">Conectado: <span className="text-emerald-400">{user.email}</span>
-          <button onClick={doLogout} className="underline ml-3">Salir</button>
+        <p className="text-zinc-500">API: {apiOk} · {stats ? `${stats.tipos} types · ${stats.piezas} pieces` : `${total} types`} · Supabase cloud · <a className="underline" href={`${API}/docs`} target="_blank">Swagger</a></p>
+        <p className="mt-1">Signed in as: <span className="text-emerald-400">{user.email}</span>
+          <button onClick={doLogout} className="underline ml-3">Sign out</button>
         </p>
       </div>
     </div>
     <div className="flex gap-2 mt-4 flex-wrap">
       <div className="relative flex-1 min-w-[200px]">
-        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar: dragon, bosque, token…"
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search: dragon, forest, token…"
           className="w-full bg-zinc-900 border border-zinc-800 rounded px-3 py-2 pr-8 outline-none" />
-        {q && (<button onClick={() => setQ("")} title="Limpiar búsqueda"
+        {q && (<button onClick={() => setQ("")} title="Clear search"
           className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white text-xl leading-none">×</button>)}
       </div>
       <select value={ftype} onChange={e => { const t = e.target.value; setFtype(t); setSelTags([]); setPage(1); loadFacets(token, t); reload(q, token, 1, [], t); }}
         className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm">
-        <option value="">todo tipo</option>
+        <option value="">all types</option>
         {["mini", "scenery", "token", "tile", "prop"].map(t => <option key={t} value={t}>{t}</option>)}
       </select>
-      <button onClick={openCreate} className="bg-white text-black rounded px-4 py-2 font-semibold">+ Nuevo tipo</button>
-      <a href="/imports" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">⭳ Importar Excel</a>
-      <a href="/inbox" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">✓ Completar</a>
-      <a href="/escenarios" className="bg-emerald-400 text-black rounded px-4 py-2 font-semibold">◈ Escenarios</a>
+      <button onClick={openCreate} className="bg-white text-black rounded px-4 py-2 font-semibold">+ New type</button>
+      <a href="/imports" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">⭳ Import Excel</a>
+      <a href="/inbox" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">✓ Complete</a>
+      <a href="/escenarios" className="bg-emerald-400 text-black rounded px-4 py-2 font-semibold">◈ Scenarios</a>
     </div>
     {facets.length > 0 && (
       <div className="flex gap-1 mt-2 flex-wrap items-center">
-        <span className="text-xs text-zinc-500">Tags{ftype ? ` en ${ftype}` : ""} (cualquiera):</span>
+        <span className="text-xs text-zinc-500">Tags{ftype ? ` in ${ftype}` : ""} (any):</span>
         {facets.slice(0, 30).map((t: any) => (
           <button key={t.name} onClick={() => {
             const next = selTags.includes(t.name) ? selTags.filter(x => x !== t.name) : [...selTags, t.name];
@@ -466,19 +482,19 @@ export default function Dashboard() {
             className={`tag-pill text-xs rounded-full px-2 py-1 border ${selTags.includes(t.name) ? "bg-white text-black" : "bg-zinc-900 border-zinc-700"}`}>
             {t.name} ({t.count})</button>))}
       </div>)}
-    {loading && <p className="text-xs text-zinc-500 mt-2">Buscando…</p>}
+    {loading && <p className="text-xs text-zinc-500 mt-2">Searching…</p>}
     <div className="mt-3 bg-zinc-900/60 border border-zinc-800 rounded p-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-zinc-400 font-bold">Filtros{nActiveFilters > 0 && ` (${nActiveFilters})`}</span>
+        <span className="text-xs text-zinc-400 font-bold">Filters{nActiveFilters > 0 && ` (${nActiveFilters})`}</span>
         {nActiveFilters > 0 && (
-          <button onClick={clearFilters} className="text-xs bg-red-950 border border-red-900 rounded px-2 py-1">Limpiar filtros</button>)}
+          <button onClick={clearFilters} className="text-xs bg-red-950 border border-red-900 rounded px-2 py-1">Clear filters</button>)}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
         {FILTER_FIELDS.map(f => (
           <label key={f.k} className="text-xs text-zinc-400">{f.label}
             <select value={fvals[f.k] || ""} onChange={e => applyFilter(f.k, e.target.value)}
               className="mt-1 w-full bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200">
-              <option value="">Todos</option>
+              <option value="">All</option>
               {(ffacets[f.k] || []).map((o: any) => (
                 <option key={o.value} value={o.value}>{o.value} ({o.count})</option>))}
             </select>
@@ -498,23 +514,23 @@ export default function Dashboard() {
           <div className="text-xs text-zinc-400">{m.type} · x{m.quantity ?? 1} · {m.completeness_score ?? 0}%</div>
           <div className="h-1 bg-zinc-800 rounded mt-2"><div className="h-1 bg-emerald-400 rounded" style={{ width: `${m.completeness_score ?? 0}%` }} /></div>
           <div className="flex gap-2 mt-2">
-            <button onClick={(e) => { e.stopPropagation(); openEdit(m); }} className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-full">Editar</button>
+            <button onClick={(e) => { e.stopPropagation(); openEdit(m); }} className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-full">Edit</button>
           </div>
         </div>))}
     </div>
-    {minis.length === 0 && !loading && <p className="text-zinc-500 mt-6">Sin resultados. Ajusta búsqueda o filtros.</p>}
+    {minis.length === 0 && !loading && <p className="text-zinc-500 mt-6">No results. Adjust search or filters.</p>}
     {total > pageSize && (
       <div className="mt-4 flex flex-col items-center gap-2">
         <div className="flex gap-2 items-center text-sm">
           <button disabled={page <= 1} onClick={() => { const p = page - 1; setPage(p); reload(q, token, p); }}
             className="bg-zinc-800 rounded px-3 py-1 disabled:opacity-40">←</button>
-          <span className="text-xs text-zinc-400">pág {page} de {Math.ceil(total / pageSize)} · {total} tipos</span>
+          <span className="text-xs text-zinc-400">page {page} of {Math.ceil(total / pageSize)} · {total} types</span>
           <button disabled={page * pageSize >= total} onClick={() => { const p = page + 1; setPage(p); reload(q, token, p); }}
             className="bg-zinc-800 rounded px-3 py-1 disabled:opacity-40">→</button>
         </div>
         <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); reload(q, token, 1, selTags, ftype, Number(e.target.value)); }}
           className="bg-zinc-900 border border-zinc-800 rounded px-3 py-1 text-xs text-zinc-400">
-          {[24, 50, 100].map(n => <option key={n} value={n}>{n}/pág</option>)}
+          {[24, 50, 100].map(n => <option key={n} value={n}>{n}/page</option>)}
         </select>
       </div>)}
 
@@ -524,25 +540,25 @@ export default function Dashboard() {
           {covers[detail.id] && (
             <img src={covers[detail.id]} alt={detail.name} className="w-full max-h-64 object-contain rounded bg-black mb-2" />)}
           <h2 className="text-xl font-bold">{detail.name}</h2>
-          <p className="text-xs text-zinc-400">{detail.type} · {detail.system || "sin sistema"} · {detail.faction || "sin facción"}</p>
+          <p className="text-xs text-zinc-400">{detail.type} · {detail.system || "no system"} · {detail.faction || "no faction"}</p>
           <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
-            <div><span className={lbl}>Forma / Bioforma</span>{detail.shape || "—"} / {detail.bioform || "—"}</div>
-            <div><span className={lbl}>Material / Escala</span>{detail.material || "—"} / {detail.scale || "—"}</div>
-            <div><span className={lbl}>Colores</span>{detail.main_color || "—"} + {detail.secondary_color || "—"}</div>
-            <div><span className={lbl}>Alto / Peso / Base / Diám.</span>{detail.height_mm ?? "—"}mm / {detail.weight_g ?? "—"}g / {detail.radius_of_base_mm ?? "—"}mm / {detail.diameter_mm ?? "—"}mm</div>
+            <div><span className={lbl}>Shape / Bioform</span>{detail.shape || "—"} / {detail.bioform || "—"}</div>
+            <div><span className={lbl}>Material / Scale</span>{detail.material || "—"} / {detail.scale || "—"}</div>
+            <div><span className={lbl}>Colors</span>{detail.main_color || "—"} + {detail.secondary_color || "—"}</div>
+            <div><span className={lbl}>Height / Weight / Base / Diam.</span>{detail.height_mm ?? "—"}mm / {detail.weight_g ?? "—"}g / {detail.radius_of_base_mm ?? "—"}mm / {detail.diameter_mm ?? "—"}mm</div>
             <div><span className={lbl}>Tags</span>{(detail.tags || []).join(", ") || "—"}</div>
-            <div><span className={lbl}>Autor / Pintor / Año</span>{detail.designer || "—"} / {detail.painted_by || "—"} / {detail.year || "—"}</div>
-            <div><span className={lbl}>Tamaño / Pintado / Grid</span>{detail.size_category || "—"} / {detail.paint_status || "—"} / {detail.grid_cells ?? 1} cas.</div>
-            <div><span className={lbl}>Rol / Partidas / Fav</span>{detail.role || "—"} / {detail.play_count ?? 0} / {detail.is_favorite ? "★" : "—"}</div>
+            <div><span className={lbl}>Designer / Painter / Year</span>{detail.designer || "—"} / {detail.painted_by || "—"} / {detail.year || "—"}</div>
+            <div><span className={lbl}>Size / Painted / Grid</span>{detail.size_category || "—"} / {detail.paint_status || "—"} / {detail.grid_cells ?? 1} cells</div>
+            <div><span className={lbl}>Role / Plays / Fav</span>{detail.role || "—"} / {detail.play_count ?? 0} / {detail.is_favorite ? "★" : "—"}</div>
           </div>
-          {(detail.aliases || []).length > 0 && (<p className="text-xs text-zinc-500 mt-1">Alias: {(detail.aliases || []).join(", ")}</p>)}
-          <p className="text-sm mt-3"><span className={lbl}>Historia / lore</span>{detail.story || "Sin historia todavía"}</p>
-          {detail.comment && (<p className="text-sm mt-2"><span className={lbl}>Comentario</span>{detail.comment}</p>)}
-          <p className="text-xs text-zinc-500 mt-1">Origen: {detail.character_origin || "—"} · Ref: {detail.code_or_reference || "—"}</p>
+          {(detail.aliases || []).length > 0 && (<p className="text-xs text-zinc-500 mt-1">Aliases: {(detail.aliases || []).join(", ")}</p>)}
+          <p className="text-sm mt-3"><span className={lbl}>Story / lore</span>{detail.story || "No story yet"}</p>
+          {detail.comment && (<p className="text-sm mt-2"><span className={lbl}>Comment</span>{detail.comment}</p>)}
+          <p className="text-xs text-zinc-500 mt-1">Origin: {detail.character_origin || "—"} · Ref: {detail.code_or_reference || "—"}</p>
           <Gallery mini={detail} token={token} api={API} />
           <div className="flex gap-2 mt-4">
-            <button onClick={() => openEdit(detail)} className="bg-white text-black rounded px-3 py-2 text-sm font-semibold">Editar ficha</button>
-            <button onClick={() => setDetail(null)} className="bg-zinc-800 rounded px-3 py-2 text-sm">Cerrar</button>
+            <button onClick={() => openEdit(detail)} className="bg-white text-black rounded px-3 py-2 text-sm font-semibold">Edit entry</button>
+            <button onClick={() => setDetail(null)} className="bg-zinc-800 rounded px-3 py-2 text-sm">Close</button>
           </div>
         </div>
       </div>)}
@@ -550,56 +566,56 @@ export default function Dashboard() {
     {showForm && (
       <div className="fixed inset-0 bg-black/70 overflow-y-auto p-4">
         <form onSubmit={save} className="bg-zinc-950 border border-zinc-800 rounded max-w-2xl mx-auto p-5">
-          <h2 className="text-xl font-bold">{editing ? `Editar ${editing.name}` : "Nuevo tipo — ficha completa"}</h2>
-          <p className="text-xs text-zinc-500 mb-3">Todo lo que pongas aquí lo podrá usar después la IA/DM/CV. Solo nombre es obligatorio.</p>
+          <h2 className="text-xl font-bold">{editing ? `Edit ${editing.name}` : "New type — full entry"}</h2>
+          <p className="text-xs text-zinc-500 mb-3">Everything you enter here can later be used by the AI/DM/CV. Only name is required.</p>
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2"><label className={lbl}>Nombre *</label><input className={inp} value={form.name} onChange={set("name")} placeholder="Ej: Dragón Rojo" /></div>
-            <div><label className={lbl}>Tipo (mini / escenografía / token…)</label><select className={inp} value={form.type} onChange={set("type")}>{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
-            <div><label className={lbl}>Cantidad</label><input type="number" className={inp} value={form.quantity} onChange={set("quantity")} /></div>
-            <div><label className={lbl}>Forma (shape)</label><input className={inp} value={form.shape} onChange={set("shape")} placeholder="humanoide, bestia…" /></div>
-            <div><label className={lbl}>Bioforma</label><input className={inp} value={form.bioform} onChange={set("bioform")} placeholder="dragón, orco…" /></div>
-            <div><label className={lbl}>Material</label><input className={inp} value={form.material} onChange={set("material")} placeholder="resina, PLA…" /></div>
-            <div><label className={lbl}>Escala</label><input className={inp} value={form.scale} onChange={set("scale")} /></div>
-            <div><label className={lbl}>Color principal</label><input className={inp} value={form.main_color} onChange={set("main_color")} /></div>
-            <div><label className={lbl}>Color secundario</label><input className={inp} value={form.secondary_color} onChange={set("secondary_color")} /></div>
-            <div><label className={lbl}>Alto mm</label><input type="number" step="any" className={inp} value={form.height_mm} onChange={set("height_mm")} /></div>
-            <div><label className={lbl}>Peso g</label><input type="number" step="any" className={inp} value={form.weight_g} onChange={set("weight_g")} /></div>
+            <div className="col-span-2"><label className={lbl}>Name *</label><input className={inp} value={form.name} onChange={set("name")} placeholder="E.g.: Red Dragon" /></div>
+            <div><label className={lbl}>Type (mini / scenery / token…)</label><select className={inp} value={form.type} onChange={set("type")}>{TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+            <div><label className={lbl}>Quantity</label><input type="number" className={inp} value={form.quantity} onChange={set("quantity")} /></div>
+            <div><label className={lbl}>Shape</label><input className={inp} value={form.shape} onChange={set("shape")} placeholder="humanoid, beast…" /></div>
+            <div><label className={lbl}>Bioform</label><input className={inp} value={form.bioform} onChange={set("bioform")} placeholder="dragon, orc…" /></div>
+            <div><label className={lbl}>Material</label><input className={inp} value={form.material} onChange={set("material")} placeholder="resin, PLA…" /></div>
+            <div><label className={lbl}>Scale</label><input className={inp} value={form.scale} onChange={set("scale")} /></div>
+            <div><label className={lbl}>Main color</label><input className={inp} value={form.main_color} onChange={set("main_color")} /></div>
+            <div><label className={lbl}>Secondary color</label><input className={inp} value={form.secondary_color} onChange={set("secondary_color")} /></div>
+            <div><label className={lbl}>Height mm</label><input type="number" step="any" className={inp} value={form.height_mm} onChange={set("height_mm")} /></div>
+            <div><label className={lbl}>Weight g</label><input type="number" step="any" className={inp} value={form.weight_g} onChange={set("weight_g")} /></div>
             <div><label className={lbl}>Base mm</label><input type="number" step="any" className={inp} value={form.radius_of_base_mm} onChange={set("radius_of_base_mm")} /></div>
-            <div><label className={lbl}>Diámetro mm</label><input type="number" step="any" className={inp} value={form.diameter_mm} onChange={set("diameter_mm")} placeholder="tokens" /></div>
-            <div><label className={lbl}>Sistema RPG</label><input className={inp} value={form.system} onChange={set("system")} placeholder="D&D, Warhammer…" /></div>
-            <div className="col-span-2"><label className={lbl}>Tags (separados por coma)</label><input className={inp} value={form.tags} onChange={set("tags")} placeholder="Fantasy, D&D" /></div>
-            <div><label className={lbl}>Diseñador</label><input className={inp} value={form.designer} onChange={set("designer")} /></div>
-            <div><label className={lbl}>Pintor</label><input className={inp} value={form.painted_by} onChange={set("painted_by")} /></div>
-            <div><label className={lbl}>Marca / sello (label)</label><input className={inp} value={form.label} onChange={set("label")} placeholder="AB!, Reaper…" /></div>
-            <div><label className={lbl}>Lore canon</label><select className={inp} value={form.lore_is_canon} onChange={set("lore_is_canon")}><option value="">—</option><option value="true">Sí</option><option value="false">No</option></select></div>
-            <div><label className={lbl}>Facción</label><input className={inp} value={form.faction} onChange={set("faction")} /></div>
-            <div><label className={lbl}>Rol en escena (DM)</label><input className={inp} value={form.role} onChange={set("role")} placeholder="tanque, daño, apoyo…" /></div>
-            <div><label className={lbl}>Tamaño (DM)</label><select className={inp} value={form.size_category} onChange={set("size_category")}><option value="">—</option>{SIZE_CATEGORIES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
-            <div><label className={lbl}>Pintado</label><select className={inp} value={form.paint_status} onChange={set("paint_status")}><option value="">—</option>{PAINT_STATES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
-            <div><label className={lbl}>Casillas grid</label><input type="number" min={1} max={10} className={inp} value={form.grid_cells} onChange={set("grid_cells")} /></div>
-            <div><label className={lbl}>Partidas jugadas</label><input type="number" min={0} className={inp} value={form.play_count} onChange={set("play_count")} /></div>
-            <div><label className={lbl}>Favorita</label><select className={inp} value={form.is_favorite} onChange={set("is_favorite")}><option value="">—</option><option value="true">Sí</option><option value="false">No</option></select></div>
-            <div className="col-span-2"><label className={lbl}>Alias (otros nombres, separados por coma)</label><input className={inp} value={form.aliases} onChange={set("aliases")} placeholder="el vampiro del mar, …" /></div>
-            <div><label className={lbl}>Año / Ref</label><div className="flex gap-2"><input className={inp} value={form.year} onChange={set("year")} placeholder="año" /><input className={inp} value={form.code_or_reference} onChange={set("code_or_reference")} placeholder="ref" /></div></div>
-            <div className="col-span-2"><label className={lbl}>Origen del personaje</label><input className={inp} value={form.character_origin} onChange={set("character_origin")} /></div>
-            <div className="col-span-2"><label className={lbl}>Historia / lore</label><textarea className={inp} rows={3} value={form.story} onChange={set("story")} placeholder="Lore, personalidad, cómo usarla en partida…" /></div>
-            <div className="col-span-2"><label className={lbl}>Comentario</label><input className={inp} value={form.comment} onChange={set("comment")} placeholder="nota breve…" /></div>
-            <div className="col-span-2"><label className={lbl}>URL referencia</label><input className={inp} value={form.url} onChange={set("url")} /></div>
+            <div><label className={lbl}>Diameter mm</label><input type="number" step="any" className={inp} value={form.diameter_mm} onChange={set("diameter_mm")} placeholder="tokens" /></div>
+            <div><label className={lbl}>RPG system</label><input className={inp} value={form.system} onChange={set("system")} placeholder="D&D, Warhammer…" /></div>
+            <div className="col-span-2"><label className={lbl}>Tags (comma-separated)</label><input className={inp} value={form.tags} onChange={set("tags")} placeholder="Fantasy, D&D" /></div>
+            <div><label className={lbl}>Designer</label><input className={inp} value={form.designer} onChange={set("designer")} /></div>
+            <div><label className={lbl}>Painter</label><input className={inp} value={form.painted_by} onChange={set("painted_by")} /></div>
+            <div><label className={lbl}>Brand / stamp (label)</label><input className={inp} value={form.label} onChange={set("label")} placeholder="AB!, Reaper…" /></div>
+            <div><label className={lbl}>Canon lore</label><select className={inp} value={form.lore_is_canon} onChange={set("lore_is_canon")}><option value="">—</option><option value="true">Yes</option><option value="false">No</option></select></div>
+            <div><label className={lbl}>Faction</label><input className={inp} value={form.faction} onChange={set("faction")} /></div>
+            <div><label className={lbl}>Scene role (DM)</label><input className={inp} value={form.role} onChange={set("role")} placeholder="tank, damage, support…" /></div>
+            <div><label className={lbl}>Size (DM)</label><select className={inp} value={form.size_category} onChange={set("size_category")}><option value="">—</option>{SIZE_CATEGORIES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+            <div><label className={lbl}>Painted</label><select className={inp} value={form.paint_status} onChange={set("paint_status")}><option value="">—</option>{PAINT_STATES.map(s => <option key={s} value={s}>{s === "sin_pintar" ? "unpainted" : s === "avanzado" ? "advanced" : s === "terminada" ? "finished" : s}</option>)}</select></div>
+            <div><label className={lbl}>Grid cells</label><input type="number" min={1} max={10} className={inp} value={form.grid_cells} onChange={set("grid_cells")} /></div>
+            <div><label className={lbl}>Games played</label><input type="number" min={0} className={inp} value={form.play_count} onChange={set("play_count")} /></div>
+            <div><label className={lbl}>Favorite</label><select className={inp} value={form.is_favorite} onChange={set("is_favorite")}><option value="">—</option><option value="true">Yes</option><option value="false">No</option></select></div>
+            <div className="col-span-2"><label className={lbl}>Aliases (other names, comma-separated)</label><input className={inp} value={form.aliases} onChange={set("aliases")} placeholder="the sea vampire, …" /></div>
+            <div><label className={lbl}>Year / Ref</label><div className="flex gap-2"><input className={inp} value={form.year} onChange={set("year")} placeholder="year" /><input className={inp} value={form.code_or_reference} onChange={set("code_or_reference")} placeholder="ref" /></div></div>
+            <div className="col-span-2"><label className={lbl}>Character origin</label><input className={inp} value={form.character_origin} onChange={set("character_origin")} /></div>
+            <div className="col-span-2"><label className={lbl}>Story / lore</label><textarea className={inp} rows={3} value={form.story} onChange={set("story")} placeholder="Lore, personality, how to use it in game…" /></div>
+            <div className="col-span-2"><label className={lbl}>Comment</label><input className={inp} value={form.comment} onChange={set("comment")} placeholder="short note…" /></div>
+            <div className="col-span-2"><label className={lbl}>Reference URL</label><input className={inp} value={form.url} onChange={set("url")} /></div>
           </div>
           {editing ? (
             <div className="mt-3 border-t border-zinc-800 pt-3">
-              <h3 className="text-sm font-bold">Fotos por vista (13 del esquema + referencia)</h3>
-              <p className="text-xs text-zinc-500">Frontal es la portada; si no hay, render_3d; si no, la ilustración (concept_art).</p>
+              <h3 className="text-sm font-bold">Photos per view (13 schema + reference)</h3>
+              <p className="text-xs text-zinc-500">Frontal is the cover; if missing, render_3d; otherwise the illustration (concept_art).</p>
               <Gallery mini={editing} token={token} api={API} />
             </div>
           ) : (
-            <p className="text-xs text-zinc-500 mt-3">Guarda la ficha primero y podrás subir sus 13 vistas aquí mismo.</p>
+            <p className="text-xs text-zinc-500 mt-3">Save the entry first and you can upload its 13 views right here.</p>
           )}
           <div className="flex gap-2 mt-4">
-            <button type="submit" className="bg-white text-black rounded px-4 py-2 font-semibold">Guardar</button>
-            <button type="button" onClick={() => setShowForm(false)} className="bg-zinc-800 rounded px-4 py-2">Cancelar</button>
+            <button type="submit" className="bg-white text-black rounded px-4 py-2 font-semibold">Save</button>
+            <button type="button" onClick={() => setShowForm(false)} className="bg-zinc-800 rounded px-4 py-2">Cancel</button>
             {editing && (<button type="button" onClick={() => remove(editing)}
-              className="bg-red-950 border border-red-900 rounded px-4 py-2 ml-auto">Borrar</button>)}
+              className="bg-red-950 border border-red-900 rounded px-4 py-2 ml-auto">Delete</button>)}
           </div>
         </form>
       </div>)}

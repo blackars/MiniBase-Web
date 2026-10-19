@@ -90,8 +90,11 @@ def asset_sign(a: AssetSign, request: Request):
     raise HTTPException(500, "CLOUDINARY_* sin configurar en api/.env")
   public_id = f"minibase/{uid[:8]}/scn/{scn['slug']}/{a.kind}/{a.label}"
   # OJO: firmar EXACTAMENTE lo que el navegador envia (sin exif) o Cloudinary rechaza
+  # transformation = conversion de ENTRADA: guarda el original ya convertido a
+  # WebP q90 en el cloud, independiente de lo que envie el navegador.
   params = {"timestamp": int(time.time()), "public_id": public_id,
             "eager": "f_webp,q_auto:good,w_1200,c_limit|f_webp,q_auto:eco,w_400,c_thumb",
+            "transformation": "f_webp,q_90",
             "folder": f"minibase/{uid[:8]}/scn/{scn['slug']}/{a.kind}"}
   sig = cloudinary.utils.api_sign_request(params, os.getenv("CLOUDINARY_API_SECRET", ""))
   return {**params, "signature": sig, "api_key": os.getenv("CLOUDINARY_API_KEY", ""),
@@ -157,9 +160,11 @@ def asset_list(request: Request, scenario_id: str = "", kind: str = ""):
 def asset_delete(aid: str, request: Request):
   uid = _uid(request)
   sb = _sb()
-  _child(sb, uid, "scn_assets", aid)
+  row = _child(sb, uid, "scn_assets", aid)  # select * -> incluye cloudinary_public_id
   sb.table("scn_assets").delete().eq("id", aid).execute()
-  return {"deleted": aid}
+  from services.cloudinary_ops import destroy_asset
+  ok = destroy_asset(row.get("cloudinary_public_id"))
+  return {"deleted": aid, "cloudinary_deleted": ok}
 
 class BackupIn(BaseModel):
   image_id: str

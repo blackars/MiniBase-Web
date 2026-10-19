@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
+import { toWebP } from "../../lib/optimize";
 
 // Escenarios — Ficha funcional (fase 1); resto en maqueta hasta sus fases.
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const TABS = ["Ficha", "Partes", "Editor Tile", "Montajes", "Iluminación", "Audio", "API"];
+const TABS = ["Sheet", "Parts", "Tile Editor", "Mounts", "Lighting", "Audio", "API"];
 const KINDS = ["fisico", "digital", "hibrido"];
 const EMPTY_SCN = { name: "", kind: "fisico", width_cm: "", depth_cm: "", height_cm: "",
   tile_cm: "", palette: "", texture: "", uses: "", description: "", comments: "",
@@ -52,7 +53,7 @@ function Ficha() {
   }
   async function save(e: any) {
     e.preventDefault();
-    if (!form.name.trim()) { setMsg("El nombre es obligatorio."); return; }
+    if (!form.name.trim()) { setMsg("Name is required."); return; }
     const url = editing && sel ? `${API}/api/scenarios/${sel.id}` : `${API}/api/scenarios`;
     const r = await fetch(url, { method: editing ? "PUT" : "POST", headers: H,
       body: JSON.stringify(toPayload(form)) });
@@ -61,18 +62,23 @@ function Ficha() {
     setForm(EMPTY_SCN); setEditing(false); setSel(j.id ? j : sel); setMsg(""); load();
   }
   async function remove(id: string) {
-    if (!confirm("¿Borrar escenario?")) return;
-    await fetch(`${API}/api/scenarios/${id}`, { method: "DELETE",
+    if (!confirm("Delete scenario?")) return;
+    const r = await fetch(`${API}/api/scenarios/${id}`, { method: "DELETE",
       headers: { Authorization: `Bearer ${token}` } });
+    const j = await r.json().catch(() => ({}));
+    if (typeof j.cloudinary_deleted === "number" &&
+        j.cloudinary_deleted < (j.cloudinary_expected ?? 0))
+      alert(`Deleted, but Cloudinary cleanup did not complete (` +
+            `${j.cloudinary_deleted}/${j.cloudinary_expected} files).`);
     setSel(null); load();
   }
 
   return (<section className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
     <div className="bg-zinc-900 border border-zinc-800 rounded p-3">
       <div className="flex items-center justify-between">
-        <h2 className="font-bold text-sm">Escenarios ({items.length})</h2>
+        <h2 className="font-bold text-sm">Scenarios ({items.length})</h2>
         <button onClick={() => { setForm(EMPTY_SCN); setEditing(false); setSel(null); }}
-          className="text-xs bg-white text-black rounded px-2 py-1 font-semibold">＋ Nuevo</button>
+          className="text-xs bg-white text-black rounded px-2 py-1 font-semibold">＋ New</button>
       </div>
       <div className="mt-2 space-y-1 max-h-96 overflow-y-auto">
         {items.map(s => (
@@ -81,57 +87,57 @@ function Ficha() {
             <span className="font-semibold">{s.name}</span>
             <span className="text-xs text-zinc-500 ml-2">{s.kind}{s.genre ? ` · ${s.genre}` : ""}</span>
           </button>))}
-        {items.length === 0 && <p className="text-xs text-zinc-500">Sin escenarios. Crea el primero →</p>}
+        {items.length === 0 && <p className="text-xs text-zinc-500">No scenarios. Create the first one →</p>}
       </div>
       {msg && <p className="text-xs text-amber-400 mt-2">{msg}</p>}
     </div>
     <form onSubmit={save} className="md:col-span-2 bg-zinc-900 border border-zinc-800 rounded p-4">
-      <h2 className="font-bold text-sm">{editing && sel ? `Editar: ${sel.name}` : "Nueva ficha de escenario"}</h2>
+      <h2 className="font-bold text-sm">{editing && sel ? `Edit: ${sel.name}` : "New scenario sheet"}</h2>
       <div className="grid grid-cols-2 gap-2 mt-2">
-        <div className="col-span-2"><label className={lbl}>Nombre *</label>
-          <input className={inp} value={form.name} onChange={set("name")} placeholder="Bosque Élfico — claro central" /></div>
-        <div><label className={lbl}>Tipo</label>
+        <div className="col-span-2"><label className={lbl}>Name *</label>
+          <input className={inp} value={form.name} onChange={set("name")} placeholder="Elven Forest — central clearing" /></div>
+        <div><label className={lbl}>Type</label>
           <select className={inp} value={form.kind} onChange={set("kind")}>
-            {KINDS.map(k => <option key={k} value={k}>{k}</option>)}</select></div>
-        <div><label className={lbl}>Género</label>
-          <input className={inp} value={form.genre} onChange={set("genre")} placeholder="fantasy, terror…" /></div>
-        <div><label className={lbl}>Ancho cm</label>
+            {KINDS.map(k => <option key={k} value={k}>{k === "fisico" ? "physical" : k === "digital" ? "digital" : "hybrid"}</option>)}</select></div>
+        <div><label className={lbl}>Genre</label>
+          <input className={inp} value={form.genre} onChange={set("genre")} placeholder="fantasy, horror…" /></div>
+        <div><label className={lbl}>Width cm</label>
           <input type="number" step="any" className={inp} value={form.width_cm} onChange={set("width_cm")} /></div>
-        <div><label className={lbl}>Fondo cm</label>
+        <div><label className={lbl}>Depth cm</label>
           <input type="number" step="any" className={inp} value={form.depth_cm} onChange={set("depth_cm")} /></div>
-        <div><label className={lbl}>Alto cm</label>
+        <div><label className={lbl}>Height cm</label>
           <input type="number" step="any" className={inp} value={form.height_cm} onChange={set("height_cm")} /></div>
-        <div><label className={lbl}>Tile cm (cantidad, decimales)</label>
+        <div><label className={lbl}>Tile cm (quantity, decimals)</label>
           <input type="number" step="any" className={inp} value={form.tile_cm} onChange={set("tile_cm")} /></div>
-        <div><label className={lbl}>Rejilla: celda cm (decimales)</label>
+        <div><label className={lbl}>Grid: cell cm (decimals)</label>
           <input type="number" step="any" className={inp} value={form.grid_cell_cm} onChange={set("grid_cell_cm")} /></div>
-        <div><label className={lbl}>Rejilla: color</label>
+        <div><label className={lbl}>Grid: color</label>
           <input type="color" className={`${inp} h-10 cursor-pointer`} value={form.grid_color} onChange={set("grid_color")} /></div>
-        <div><label className={lbl}>Rejilla: opacidad</label>
+        <div><label className={lbl}>Grid: opacity</label>
           <input type="number" step="any" min="0" max="1" className={inp} value={form.grid_opacity} onChange={set("grid_opacity")} /></div>
-        <div className="col-span-2"><label className={lbl}>Colores (coma)</label>
-          <input className={inp} value={form.palette} onChange={set("palette")} placeholder="verde, marrón, niebla" /></div>
-        <div className="col-span-2"><label className={lbl}>Textura</label>
-          <input className={inp} value={form.texture} onChange={set("texture")} placeholder="musgo, corteza, piedra" /></div>
-        <div className="col-span-2"><label className={lbl}>Usos posibles (coma)</label>
-          <input className={inp} value={form.uses} onChange={set("uses")} placeholder="emboscada, ritual, descanso" /></div>
-        <div className="col-span-2"><label className={lbl}>Descripción (contexto narrador)</label>
+        <div className="col-span-2"><label className={lbl}>Colors (comma)</label>
+          <input className={inp} value={form.palette} onChange={set("palette")} placeholder="green, brown, fog" /></div>
+        <div className="col-span-2"><label className={lbl}>Texture</label>
+          <input className={inp} value={form.texture} onChange={set("texture")} placeholder="moss, bark, stone" /></div>
+        <div className="col-span-2"><label className={lbl}>Possible uses (comma)</label>
+          <input className={inp} value={form.uses} onChange={set("uses")} placeholder="ambush, ritual, rest" /></div>
+        <div className="col-span-2"><label className={lbl}>Description (narrator context)</label>
           <textarea className={inp} rows={3} value={form.description} onChange={set("description")} /></div>
-        <div className="col-span-2"><label className={lbl}>Comentarios</label>
+        <div className="col-span-2"><label className={lbl}>Comments</label>
           <input className={inp} value={form.comments} onChange={set("comments")} /></div>
-        <div className="col-span-2"><label className={lbl}>URL referencia</label>
+        <div className="col-span-2"><label className={lbl}>Reference URL</label>
           <input className={inp} value={form.url} onChange={set("url")} /></div>
       </div>
       <div className="flex gap-2 mt-3">
-        <button type="submit" className="bg-white text-black rounded px-4 py-2 text-sm font-semibold">Guardar</button>
+        <button type="submit" className="bg-white text-black rounded px-4 py-2 text-sm font-semibold">Save</button>
         {editing && sel && (
           <button type="button" onClick={() => remove(sel.id)}
-            className="bg-red-950 border border-red-900 rounded px-4 py-2 text-sm">Borrar</button>)}
+            className="bg-red-950 border border-red-900 rounded px-4 py-2 text-sm">Delete</button>)}
       </div>
     </form>
     {editing && sel && (
       <div className="md:col-span-3 mt-1">
-        <h3 className="text-sm font-bold">Locación: portada, arte y render de referencia (Cloudinary + 💾 Drive)</h3>
+        <h3 className="text-sm font-bold">Location: cover, art and reference render (Cloudinary + 💾 Drive)</h3>
         <AssetStrip sid={sel.id} kinds={["cover", "art", "render_3d"]} />
       </div>)}
   </section>);
@@ -141,7 +147,7 @@ function Soon({ label }: { label: string }) {
   const [n, setN] = useState(0);
   return (<button onClick={() => setN(n + 1)}
     className="text-xs bg-zinc-800 border border-zinc-700 rounded px-3 py-2 hover:border-emerald-400">
-    {label}{n > 0 && <span className="text-amber-400"> · próximamente ({n})</span>}
+    {label}{n > 0 && <span className="text-amber-400"> · coming soon ({n})</span>}
   </button>);
 }
 
@@ -157,18 +163,22 @@ function useToken() {
   } catch { return ""; }
 }
 
-// Subida: firma backend -> Cloudinary directo (WebP eager) -> registra asset.
+// Subida: optimiza a WebP en el navegador -> firma backend -> Cloudinary directo -> registra asset.
 // kind: cover|part|montaje|light|art|render_3d|audio_cover
 async function uploadAsset(api: string, token: string, scenarioId: string,
-    kind: string, label: string, file: File, onMsg: (m: string) => void) {
-  onMsg("Firmando…");
+    kind: string, label: string, raw: File, onMsg: (m: string) => void) {
+  // Paso previo de optimización: convierte a WebP (calidad 0.9) para almacenar menos
+  // bytes en Cloudinary; si no se puede convertir, sube el archivo original.
+  onMsg("Optimizing to WebP…");
+  const file = await toWebP(raw);
+  onMsg("Signing…");
   const H: any = { Authorization: `Bearer ${token}` };
   const s = await (await fetch(`${api}/api/scn/assets/sign`, {
     method: "POST", headers: { ...H, "Content-Type": "application/json" },
     body: JSON.stringify({ scenario_id: scenarioId, kind, label }),
   })).json();
-  if (!s.upload_url) throw new Error(s.detail || "firma falló (¿migración 007?)");
-  onMsg("Subiendo a Cloudinary…");
+  if (!s.upload_url) throw new Error(s.detail || "sign failed (migration 007?)");
+  onMsg("Uploading to Cloudinary…");
   const fd = new FormData();
   fd.append("file", file);
   fd.append("api_key", s.api_key);
@@ -176,11 +186,12 @@ async function uploadAsset(api: string, token: string, scenarioId: string,
   fd.append("public_id", s.public_id);
   fd.append("folder", s.folder);
   fd.append("eager", s.eager);
+  if (s.transformation) fd.append("transformation", s.transformation);
   fd.append("signature", s.signature);
   const up = await (await fetch(s.upload_url, { method: "POST", body: fd })).json();
   if (up.error) throw new Error(up.error.message);
   const webp = (up.eager && up.eager[0] && up.eager[0].secure_url) || up.secure_url;
-  onMsg("Guardando…");
+  onMsg("Saving…");
   const c = await fetch(`${api}/api/scn/assets/complete`, {
     method: "POST", headers: { ...H, "Content-Type": "application/json" },
     body: JSON.stringify({ scenario_id: scenarioId, kind, label,
@@ -204,7 +215,7 @@ function AssetStrip({ sid, kinds }: { sid: string; kinds: string[] }) {
       { headers: { Authorization: `Bearer ${token}` } });
     const j = await r.json().catch(() => ({}));
     if (r.ok) setItems((j.items || []).filter((a: any) => kinds.includes(a.kind)));
-    else if (r.status === 409) setMsg("Corre la migración 007 en Supabase.");
+    else if (r.status === 409) setMsg("Run migration 007 in Supabase.");
   }
   useEffect(() => { if (sid) load(); }, [sid]);
   async function up(e: any, kind: string) {
@@ -215,9 +226,12 @@ function AssetStrip({ sid, kinds }: { sid: string; kinds: string[] }) {
     finally { e.target.value = ""; }
   }
   async function del(id: string) {
-    if (!confirm("¿Borrar imagen?")) return;
-    await fetch(`${API2}/api/scn/assets/${id}`, { method: "DELETE",
+    if (!confirm("Delete image?")) return;
+    const r = await fetch(`${API2}/api/scn/assets/${id}`, { method: "DELETE",
       headers: { Authorization: `Bearer ${token}` } });
+    const j = await r.json().catch(() => ({}));
+    if (j.cloudinary_deleted && !["ok", "not found"].includes(j.cloudinary_deleted))
+      setMsg(`Cloudinary cleanup: ${j.cloudinary_deleted} (el archivo puede seguir en el cloud)`);
     load();
   }
   async function backup(id: string) {
@@ -244,7 +258,7 @@ function AssetStrip({ sid, kinds }: { sid: string; kinds: string[] }) {
       {kinds.map(k => (
         <label key={k} className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 cursor-pointer">
           📷 {k}<input type="file" accept="image/*" className="hidden" onChange={e => up(e, k)} /></label>))}
-      <input value={drive} onChange={e => setDrive(e.target.value)} placeholder="link Drive → 💾 última"
+      <input value={drive} onChange={e => setDrive(e.target.value)} placeholder="Drive link → 💾 latest"
         className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs flex-1 min-w-[140px]" />
       <button onClick={() => items.length && backup(items[items.length - 1].id)}
         className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1">💾</button>
@@ -277,21 +291,21 @@ function PartsTab({ sid }: { sid: string }) {
     if (r.ok) { setName(""); load(); } else setMsg((await r.json()).detail || r.status);
   }
   async function del(id: string) {
-    if (!confirm("¿Borrar parte?")) return;
+    if (!confirm("Delete part?")) return;
     await fetch(`${API3}/api/scn/parts/${id}`, { method: "DELETE",
       headers: { Authorization: `Bearer ${token}` } });
     load();
   }
   return (<section className="mt-4">
-    <h2 className="font-bold text-sm">Partes reutilizables (el modelo arma mapas con estas)</h2>
+    <h2 className="font-bold text-sm">Reusable parts (the model builds maps with these)</h2>
     <AssetStrip sid={sid} kinds={["part", "art", "render_3d"]} />
     <div className="flex gap-1 mt-2">
-      <input value={name} onChange={e => setName(e.target.value)} placeholder="suelo bosque…"
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="forest floor…"
         className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs flex-1" />
       <select value={kind} onChange={e => setKind(e.target.value)}
         className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs">
-        {["suelo", "rio", "puente", "claro", "ladera", "cueva", "ruina", "camino", "muro", "agua"].map(k => (
-          <option key={k} value={k}>{k}</option>))}</select>
+        {[["suelo","floor"],["rio","river"],["puente","bridge"],["claro","clearing"],["ladera","hillside"],["cueva","cave"],["ruina","ruin"],["camino","road"],["muro","wall"],["agua","water"]].map(([v,l]) => (
+          <option key={v} value={v}>{l}</option>))}</select>
       <button onClick={add} className="text-xs bg-white text-black rounded px-3 py-1 font-semibold">＋</button>
     </div>
     {msg && <p className="text-xs text-amber-400 mt-1">{msg}</p>}
@@ -328,7 +342,7 @@ function TilesTab({ sid }: { sid: string }) {
     const g = [...grid]; g[i] = brush; setGrid(g);
   }
   async function save() {
-    if (!name.trim()) { setMsg("Ponle nombre al preset."); return; }
+    if (!name.trim()) { setMsg("Name the preset."); return; }
     const r = await fetch(`${API3}/api/scn/tiles`, { method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify({ scenario_id: sid, name: name.trim(), cols, rows: rowsN, grid }) });
@@ -339,7 +353,7 @@ function TilesTab({ sid }: { sid: string }) {
   }
   return (<section className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
     <div className="md:col-span-2 bg-zinc-900 border border-zinc-800 rounded p-3">
-      <h2 className="font-bold text-sm">Canvas {cols}×{rowsN} (clic pinta, la rejilla del proyector lo respeta)</h2>
+      <h2 className="font-bold text-sm">Canvas {cols}×{rowsN} (click paints, the projector grid respects it)</h2>
       <div className="grid gap-px mt-2 bg-zinc-800 border border-zinc-800" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
         {grid.map((v, i) => (
           <div key={i} onClick={() => paint(i)} className="aspect-square cursor-pointer"
@@ -353,21 +367,21 @@ function TilesTab({ sid }: { sid: string }) {
         <span className="text-xs">×</span>
         <input type="number" value={rowsN} min={1} max={40} onChange={e => setRowsN(Number(e.target.value))}
           className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs w-16" />
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="nombre preset"
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="preset name"
           className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs flex-1" />
-        <button onClick={save} className="text-xs bg-white text-black rounded px-3 py-1 font-semibold">Guardar</button>
+        <button onClick={save} className="text-xs bg-white text-black rounded px-3 py-1 font-semibold">Save</button>
       </div>
       {msg && <p className="text-xs text-amber-400 mt-1">{msg}</p>}
     </div>
     <div className="bg-zinc-900 border border-zinc-800 rounded p-3">
-      <h2 className="font-bold text-sm">Presets del modelo ({presets.length})</h2>
+      <h2 className="font-bold text-sm">Model presets ({presets.length})</h2>
       <div className="grid gap-1 mt-2">
         {presets.map(p => (
           <div key={p.id} className="flex gap-1 items-center">
             <button onClick={() => openPreset(p)} className="flex-1 text-left text-xs bg-zinc-950 border border-zinc-800 rounded px-2 py-1">
               {p.name} <span className="text-zinc-500">({p.cols}×{p.rows})</span></button>
             <button onClick={async () => {
-              if (!confirm("¿Borrar preset?")) return;
+              if (!confirm("Delete preset?")) return;
               await fetch(`${API3}/api/scn/tiles/${p.id}`, { method: "DELETE",
                 headers: { Authorization: `Bearer ${token}` } });
               load();
@@ -426,7 +440,7 @@ function MountsTab({ sid }: { sid: string }) {
   }
   async function combine() {
     if (!selMount) return;
-    setMsg("Componiendo PNG…");
+    setMsg("Composing PNG…");
     const r = await fetch(`${API3}/api/scn/mounts/${selMount.id}/combine`, {
       method: "POST", headers: { Authorization: `Bearer ${token}` } });
     const j = await r.json().catch(() => ({}));
@@ -434,9 +448,9 @@ function MountsTab({ sid }: { sid: string }) {
   }
   return (<section className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
     <div className="bg-zinc-900 border border-zinc-800 rounded p-3">
-      <h2 className="font-bold text-sm">Montajes</h2>
+      <h2 className="font-bold text-sm">Mounts</h2>
       <div className="flex gap-1 mt-2">
-        <input value={name} onChange={e => setName(e.target.value)} placeholder="emboscada norte…"
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="north ambush…"
           className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs flex-1" />
         <button onClick={addMount} className="text-xs bg-white text-black rounded px-2 py-1 font-semibold">＋</button>
       </div>
@@ -445,36 +459,36 @@ function MountsTab({ sid }: { sid: string }) {
           <button key={m.id} onClick={() => setSelMount(m)}
             className={`w-full text-left text-xs rounded px-2 py-1 border ${selMount?.id === m.id ? "bg-zinc-800 border-zinc-600" : "border-transparent hover:bg-zinc-800"}`}>
             <span className="font-semibold">{m.name}</span>
-            <span className="text-zinc-500 ml-1">{(m.items || []).length} piezas</span>
+            <span className="text-zinc-500 ml-1">{(m.items || []).length} pieces</span>
             {m.composed_url && <span className="text-emerald-400 ml-1">· PNG ✓</span>}
           </button>))}
       </div>
       {msg && <p className="text-xs text-amber-400 mt-1">{msg}</p>}
     </div>
     <div className="md:col-span-2 bg-zinc-900 border border-zinc-800 rounded p-3">
-      {!selMount ? <p className="text-xs text-zinc-500">Elige un montaje ←</p> : (<>
+      {!selMount ? <p className="text-xs text-zinc-500">Pick a mount ←</p> : (<>
         <h2 className="font-bold text-sm">{selMount.name}</h2>
         {selMount.composed_url && (
           <a href={selMount.composed_url} target="_blank" rel="noreferrer">
             <img src={selMount.composed_url} alt="compuesto" className="rounded mt-2 max-h-64 object-contain bg-black" /></a>)}
         <div className="flex gap-1 mt-2">
           <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && searchMinis()}
-            placeholder="buscar mini/escenografía de tu base…"
+            placeholder="search mini/scenery in your collection…"
             className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs flex-1" />
-          <button onClick={searchMinis} className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1">Buscar</button>
+          <button onClick={searchMinis} className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1">Search</button>
         </div>
         <div className="grid grid-cols-2 gap-1 mt-1 max-h-32 overflow-y-auto">
           {found.map((m: any) => (
             <button key={m.id} onClick={() => addItem(m.type === "scenery" ? "scenery" : "mini", m)}
               className="text-left text-xs bg-zinc-950 border border-zinc-800 rounded px-2 py-1">＋ {m.name} <span className="text-zinc-500">({m.type})</span></button>))}
         </div>
-        <p className="text-xs text-zinc-500 mt-2">Piezas ({(selMount.items || []).length}):</p>
+        <p className="text-xs text-zinc-500 mt-2">Pieces ({(selMount.items || []).length}):</p>
         <div className="flex gap-1 flex-wrap mt-1">
           {(selMount.items || []).map((it: any) => (
             <span key={it.id} className="text-xs bg-zinc-950 border border-zinc-800 rounded px-2 py-1">
               {it.kind} · ({it.x},{it.y}) <button onClick={() => delItem(it.id)} className="text-red-400 ml-1">✕</button></span>))}
         </div>
-        <button onClick={combine} className="mt-2 text-xs bg-emerald-400 text-black rounded px-3 py-1 font-semibold">◈ Combinar PNGs</button>
+        <button onClick={combine} className="mt-2 text-xs bg-emerald-400 text-black rounded px-3 py-1 font-semibold">◈ Combine PNGs</button>
       </>)}
     </div>
   </section>);
@@ -506,14 +520,14 @@ function LightTab({ sid }: { sid: string }) {
     if (r.ok) { setName(""); load(); }
   }
   return (<section className="mt-4">
-    <h2 className="font-bold text-sm">Iluminación (presets que el proyector consume)</h2>
+    <h2 className="font-bold text-sm">Lighting (presets the projector uses)</h2>
     <AssetStrip sid={sid} kinds={["light"]} />
     <div className="flex gap-1 mt-2">
-      <input value={name} onChange={e => setName(e.target.value)} placeholder="noche + antorchas…"
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="night + torches…"
         className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs flex-1" />
       <select value={mood} onChange={e => setMood(e.target.value)}
         className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs">
-        {["dia", "atardecer", "noche", "niebla", "custom"].map(m => <option key={m} value={m}>{m}</option>)}</select>
+        {[["dia","day"],["atardecer","sunset"],["noche","night"],["niebla","fog"],["custom","custom"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}</select>
       <button onClick={add} className="text-xs bg-white text-black rounded px-3 py-1 font-semibold">＋</button>
     </div>
     {msg && <p className="text-xs text-amber-400 mt-1">{msg}</p>}
@@ -565,30 +579,30 @@ function AudioTab({ sid }: { sid: string }) {
           <p className="text-xs font-semibold">{a.title} {a.genre && <span className="text-zinc-500">· {a.genre}</span>}</p>
           {a.url && <audio controls src={a.url} className="w-full h-8 mt-1" />}
         </div>))}
-      {sts.length === 0 && <p className="text-xs text-zinc-500 mt-1">Sin soundtracks.</p>}
+      {sts.length === 0 && <p className="text-xs text-zinc-500 mt-1">No soundtracks.</p>}
     </div>
     <div className="bg-zinc-900 border border-zinc-800 rounded p-3">
-      <h2 className="font-bold text-sm">Efectos ({sfx.length})</h2>
+      <h2 className="font-bold text-sm">Effects ({sfx.length})</h2>
       {sfx.map((a: any) => (
         <div key={a.id} className="flex items-center gap-2 mt-1">
           <span className="text-xs flex-1">{a.title} {a.zone && <span className="text-zinc-500">· {a.zone}</span>}</span>
           {a.url && <audio controls src={a.url} className="h-8 w-32" />}
         </div>))}
-      {sfx.length === 0 && <p className="text-xs text-zinc-500 mt-1">Sin efectos.</p>}
+      {sfx.length === 0 && <p className="text-xs text-zinc-500 mt-1">No effects.</p>}
     </div>
     <div className="md:col-span-2 bg-zinc-900 border border-zinc-800 rounded p-3">
-      <h2 className="font-bold text-sm">＋ Agregar (pega URL de Drive/Cloudinary o súbelo como asset y pega el link)</h2>
+      <h2 className="font-bold text-sm">＋ Add (paste a Drive/Cloudinary URL or upload it as an asset and paste the link)</h2>
       <div className="flex gap-1 mt-2 flex-wrap">
-        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="título"
+        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="title"
           className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs flex-1" />
         <select value={kind} onChange={e => setKind(e.target.value)}
           className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs">
           <option value="soundtrack">soundtrack</option><option value="sfx">sfx</option></select>
-        <input value={genre} onChange={e => setGenre(e.target.value)} placeholder="género"
+        <input value={genre} onChange={e => setGenre(e.target.value)} placeholder="genre"
           className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs" />
         <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…mp3"
           className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs flex-1" />
-        <button onClick={add} className="text-xs bg-white text-black rounded px-3 py-1 font-semibold">Guardar</button>
+        <button onClick={add} className="text-xs bg-white text-black rounded px-3 py-1 font-semibold">Save</button>
       </div>
       {msg && <p className="text-xs text-amber-400 mt-1">{msg}</p>}
     </div>
@@ -597,7 +611,7 @@ function AudioTab({ sid }: { sid: string }) {
 
 export default function Escenarios() {
   const [ok, setOk] = useState(false);
-  const [tab, setTab] = useState("Ficha");
+  const [tab, setTab] = useState("Sheet");
   const [scns, setScns] = useState<any[]>([]);
   const [selId, setSelId] = useState("");
   const API4 = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -618,62 +632,62 @@ export default function Escenarios() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!ok) return (<main className="p-6"><p className="text-zinc-500 text-sm">Verificando acceso…</p></main>);
+  if (!ok) return (<main className="p-6"><p className="text-zinc-500 text-sm">Checking access…</p></main>);
 
   return (<main className="p-6 max-w-6xl mx-auto">
-    <a href="/" className="text-zinc-400 text-sm">← Volver</a>
-    <h1 className="text-2xl font-bold mt-2">◈ Escenarios <span className="text-xs text-emerald-400 font-normal border border-emerald-900 rounded px-2 py-0.5 ml-2">MODULOS ACTIVOS</span> <a href="/proyector" className="text-xs bg-white text-black rounded px-2 py-1 ml-2 font-semibold">◉ Proyector</a></h1>
-    <p className="text-xs text-zinc-500 mt-1">Escenarios para pantalla o proyección. Contexto para el modelo gestor y el narrador.</p>
+    <a href="/" className="text-zinc-400 text-sm">← Back</a>
+    <h1 className="text-2xl font-bold mt-2">◈ Scenarios <span className="text-xs text-emerald-400 font-normal border border-emerald-900 rounded px-2 py-0.5 ml-2">ACTIVE MODULES</span> <a href="/proyector" className="text-xs bg-white text-black rounded px-2 py-1 ml-2 font-semibold">◉ Projector</a></h1>
+    <p className="text-xs text-zinc-500 mt-1">Scenarios for screen or projection. Context for the manager model and the narrator.</p>
 
     <div className="flex gap-1 mt-4 flex-wrap items-center">
       {TABS.map(t => (
         <button key={t} onClick={() => setTab(t)}
           className={`text-xs rounded px-3 py-2 border ${tab === t ? "bg-white text-black font-semibold" : "bg-zinc-900 border-zinc-800"}`}>{t}</button>))}
     </div>
-    {tab !== "Ficha" && (
+    {tab !== "Sheet" && (
       <div className="mt-2 flex gap-2 items-center">
-        <span className="text-xs text-zinc-400">Escenario:</span>
+        <span className="text-xs text-zinc-400">Scenario:</span>
         <select value={selId} onChange={e => setSelId(e.target.value)}
           className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs">
-          <option value="">— elige —</option>
+          <option value="">— pick —</option>
           {scns.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
       </div>)}
 
-    {tab === "Ficha" && <Ficha />}
+    {tab === "Sheet" && <Ficha />}
 
-    {tab === "Partes" && (selId
+    {tab === "Parts" && (selId
       ? <PartsTab sid={selId} />
-      : <p className="text-xs text-zinc-500 mt-4">Crea primero un escenario en Ficha ↑</p>)}
+      : <p className="text-xs text-zinc-500 mt-4">Create a scenario in Sheet first ↑</p>)}
 
-    {tab === "Editor Tile" && (selId
+    {tab === "Tile Editor" && (selId
       ? <TilesTab sid={selId} />
-      : <p className="text-xs text-zinc-500 mt-4">Crea primero un escenario en Ficha ↑</p>)}
+      : <p className="text-xs text-zinc-500 mt-4">Create a scenario in Sheet first ↑</p>)}
 
-    {tab === "Montajes" && (selId
+    {tab === "Mounts" && (selId
       ? <MountsTab sid={selId} />
-      : <p className="text-xs text-zinc-500 mt-4">Crea primero un escenario en Ficha ↑</p>)}
+      : <p className="text-xs text-zinc-500 mt-4">Create a scenario in Sheet first ↑</p>)}
 
-    {tab === "Iluminación" && (selId
+    {tab === "Lighting" && (selId
       ? <LightTab sid={selId} />
-      : <p className="text-xs text-zinc-500 mt-4">Crea primero un escenario en Ficha ↑</p>)}
+      : <p className="text-xs text-zinc-500 mt-4">Create a scenario in Sheet first ↑</p>)}
 
     {tab === "Audio" && (selId
       ? <AudioTab sid={selId} />
-      : <p className="text-xs text-zinc-500 mt-4">Crea primero un escenario en Ficha ↑</p>)}
+      : <p className="text-xs text-zinc-500 mt-4">Create a scenario in Sheet first ↑</p>)}
 
     {tab === "API" && (
       <section className="mt-4 bg-zinc-900 border border-zinc-800 rounded p-4">
-        <h2 className="font-bold text-sm">Módulos activos (diseño modular)</h2>
+        <h2 className="font-bold text-sm">Active modules (modular design)</h2>
         <ul className="text-xs text-zinc-400 mt-2 space-y-1 font-mono">
-          <li>✓ /api/scenarios — ficha CRUD + {"{id}"}/dataset narrador</li>
-          <li>✓ /api/scn/parts — partes reutilizables</li>
-          <li>✓ /api/scn/tiles — presets tile (grid JSONB)</li>
-          <li>✓ /api/scn/mounts — montajes + items + combine PNG</li>
-          <li>✓ /api/scn/lighting — presets luz + projector_payload</li>
-          <li>✓ /api/scn/audios — soundtracks + sfx (metadatos)</li>
-          <li>✓ /api/scn/assets — fotos Cloudinary + backup Drive</li>
-          <li>· /api/scn/mounts/{"{id}"}/project — al proyector (siguiente)</li>
+          <li>✓ /api/scenarios — sheet CRUD + {"{id}"}/dataset narrator</li>
+          <li>✓ /api/scn/parts — reusable parts</li>
+          <li>✓ /api/scn/tiles — tile presets (grid JSONB)</li>
+          <li>✓ /api/scn/mounts — mounts + items + combine PNG</li>
+          <li>✓ /api/scn/lighting — light presets + projector_payload</li>
+          <li>✓ /api/scn/audios — soundtracks + sfx (metadata)</li>
+          <li>✓ /api/scn/assets — Cloudinary photos + Drive backup</li>
+          <li>· /api/scn/mounts/{"{id}"}/project — to projector (next)</li>
         </ul>
       </section>)}
   </main>);

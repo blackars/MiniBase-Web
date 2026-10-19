@@ -436,3 +436,100 @@ Decisión del usuario: el conteo principal son **tipos únicos** (709), no pieza
   Fix: `Optional[bool]`. Además `errText()` formatea detail (string, lista
   de validación o JSON) para que ningún error vuelva a verse como objeto.
   Verificado: mismo payload que fallaba ahora PUT 200. API reiniciada.
+
+---
+
+## 13. Sesión 2026-10-18 — optimización WebP previa a carga + limpieza real en Cloudinary al borrar
+
+### 13.1 Conversión automática a WebP antes de subir (calidad q90, pérdida <10%)
+**Problema:** la subida va directo navegador → Cloudinary (la API solo firma), así que
+si el paso cliente no llegaba a ejecutarse, Cloudinary guardaba el JPG/PNG original sin comprimir.
+Nuevo archivo `web/lib/optimize.ts` con `toWebP(file)`: Canvas `createImageBitmap`
+(`imageOrientation: "from-image"` para respetar EXIF) con calidad `WEBP_QUALITY = 0.9`.
+- Fallback seguro: devuelve el archivo original si no se puede decodificar (HEIC),
+  navegador sin encoder WebP, es GIF animado, ya es WebP (evita pérdida acumulada)
+  o el WebP pesa igual/más que el original.
+Integra en ambos puntos de subida: `web/app/page.tsx` (`Gallery.upload`, fotos de minis)
+y `web/app/escenarios/page.tsx` (`uploadAsset`, cover/part/art/render_3d/light/montaje).
+Mensaje UI: `"Optimizing to WebP…"`; `file_size` registrado refleja el WebP.
+
+### 13.2 Garantía en el cloud (transformación de entrada firmada)
+La capa cliente es un intento; la garantía definitiva es servidor. `api/routers/minis.py`
+y `api/routers/scn_modules.py` firman ahora `transformation=f_webp,q_90` junto al `eager`,
+por lo que Cloudinary convierte y almacena el original como WebP calidad 90 **siempre**,
+independiente de lo que envíe el navegador. Los derivados eager (detalle + thumb) se
+generan desde el WebP normalizado y siguen como URL canónica. El frontend envía
+`transformation` solo si la API la firma (compatibilidad con API vieja, sin "Invalid Signature").
+
+### 13.3 Limpieza real al borrar (no dejaba huérfanos en Cloudinary)
+Nuevo servicio `api/services/cloudinary_ops.py` (`destroy_asset` + `cleanup_assets` con
+`invalidate=True`, borra original y todos sus derivados). Si `CLOUDINARY_*` no está en
+`.env`, devuelve `skipped` sin romper el flujo.
+Conectado en los 5 caminos de borrado:
+- `DELETE /api/images/{image_id}` (`media.py`) — fila + archivo de esa foto.
+- `DELETE /api/minis/{id}` (`minis.py`) — captura los `cloudinary_public_id` de sus fotos
+  **antes** del cascade de Supabase y destruye cada una; devuelve conteo `cloudinary_deleted/expected`.
+- `DELETE /api/scn/assets/{aid}` (`scn_modules.py`) — fila + asset.
+- `DELETE /api/scenarios/{id}` (`scn_scenarios.py`) — fila + todos sus assets del escenario.
+- Si Cloudinary no responde, el delete no explota: la UI avisa con `cloudinary_deleted`
+  distinto de `ok`/`not found` (imagen/asset), o alerta `deleted / X/Y` en minis/escenario.
+
+### 13.4 Verificación
+- `py_compile` OK en los 5 routers de API + `cloudinary_ops.py`.
+- `npx tsc --noEmit --skipLibCheck` en `web/` limpio.
+- `next build` compila (8 páginas, 0 errores).
+- Pendiente usuario: reiniciar ambos servidores (`api_INICIAR.bat`, `web_INICIAR.bat`) y
+  `Ctrl+Shift+R` en el navegador (caché). Los JPGs ya subidos antes de este cambio siguen
+  pesados en la cuenta de Cloudinary (la transformation aplica solo a subidas nuevas).
+
+---
+
+## 14. Sesión 2026-10-16 — UI completa al inglés (decisión permanente)
+
+Decisión del usuario: **de ahora en más toda la UI es en inglés**.
+El código/comentarios pueden seguir en español; los valores guardados en DB
+NO se tocan. Solo se tradujo lo visible en `web/app/`.
+
+### 13.1 Alcance (7 archivos, solo strings visibles)
+- `web/app/layout.tsx`: `lang="es"` → `"en"`, meta description → inglés.
+- `web/app/page.tsx` (dashboard): login, header (types/pieces, Sign in/out),
+  buscador, filtros (13 labels), tags, paginación, tarjetas, modal detalle,
+  formulario completo (30+ labels/placeholders), galería (Photos/Reference,
+  Upload photo, Signing/Uploading/Saving, hints Cloudinary en inglés),
+  confirms/alerts (`Delete …?`, `Name is required`, `Error saving/deleting`).
+- `web/app/imports/page.tsx`: flujo 1-2-3, dry-run, reporte
+  (new/updated/skipped/identical, versions, fill-rate, missing).
+- `web/app/inbox/page.tsx`: título, contador, Field/all, missing, Save,
+  completeness.
+- `web/app/minis/[id]/page.tsx`: placeholder → inglés.
+- `web/app/escenarios/page.tsx`: tabs renombradas
+  `Ficha/Partes/Editor Tile/Montajes/Iluminación` →
+  `Sheet/Parts/Tile Editor/Mounts/Lighting` (API/Audio iguales);
+  **OJO: se actualizaron los 5 comparadores `tab === …`, el default
+  `useState("Sheet")` y el gate `tab !== "Sheet"`** — dejar uno en español
+  deja la pestaña en blanco.
+- `web/app/proyector/page.tsx`: Projector, Detected screens, Scenario,
+  Grid cell, Scenario zoom, Grid ON/OFF, Send to 2nd screen, calibración,
+  Drag to explore · recenter, mensajes pop/fullscreen.
+
+### 13.2 Reglas de traducción (para futuros cambios)
+- **Valores DB intactos**: `type` (mini/scenery/token/tile/prop),
+  `size_category`, `paint_status` (`sin_pintar/base/avanzado/terminada`),
+  `kind` escenario (`fisico/digital/hibrido`), `kind` parte
+  (`suelo/rio/puente/…`), `mood` luz (`dia/atardecer/noche/niebla/custom`)
+  se GUARDAN igual; solo el `<option>` muestra inglés
+  (ej. `value="sin_pintar">unpainted`, `value="suelo">floor`,
+  `value="dia">day`). Si agregas un enum nuevo, mantén `value` español/actual
+  y traduce solo la etiqueta.
+- `stats.tipos/stats.piezas` son nombres de campo de la API: NO renombrar,
+  solo las etiquetas que los rodean (`types/pieces`).
+- Todo string nuevo visible va en inglés desde ahora. Comentarios de código
+  pueden seguir en español.
+
+### 13.3 Verificación
+- `npx tsc --noEmit` en `web/` limpio tras el cambio.
+- Incidente en el proceso: un reemplazo no-op sobre
+  `{msg && <p …>{msg}</p>}` comió el `}` final en 6 líneas de
+  `escenarios/page.tsx` (tsc lo delató); restaurado y re-verificado.
+- Pendiente usuario: `Ctrl+Shift+R` en el navegador para ver la UI en inglés;
+  commit/push de los 7 archivos.

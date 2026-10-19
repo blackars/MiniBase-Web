@@ -311,8 +311,22 @@ def delete_mini(mini_id: str, request: Request):
     uid = _require_uid(request)
     try:
       from services import db as _db
+      from services.cloudinary_ops import cleanup_assets
+      # captura los assets reales en Cloudinary ANTES del cascade de Supabase
+      public_ids: list[str] = []
+      try:
+        sb = _db.client()
+        rows = sb.table("images").select("cloudinary_public_id") \
+          .eq("miniature_id", mini_id).execute().data or []
+        public_ids = [r["cloudinary_public_id"] for r in rows
+                      if r.get("cloudinary_public_id")]
+      except Exception:
+        pass
       _db.sb_delete_mini(mini_id, user_id=uid)
-      return {"deleted": mini_id, "mode": "supabase"}
+      # borra los archivos (y derivados) de Cloudinary, no solo las filas
+      cleaned = cleanup_assets(public_ids)
+      return {"deleted": mini_id, "mode": "supabase", "cloudinary_deleted": cleaned,
+              "cloudinary_expected": len(public_ids)}
     except HTTPException:
       raise
     except AssertionError as e:
@@ -371,12 +385,17 @@ def sign_image(mini_id: str, request: Request, view_type: str = "frontal", colle
             "public_id": f"minibase/{user}/{collection}/{slug}/{view_type}",
             "note": "Pon CLOUDINARY_* en api/.env para firma real"}
   public_id = f"minibase/{user}/{collection}/{slug}/{view_type}"
-  # Pipeline WebP: el original se guarda + Cloudinary genera derivados WebP
-  # (detalle 800 + thumb 200). La web guarda la URL WebP como secure_url.
+  # Pipeline WebP en 2 capas:
+  #   1) transformation = conversión de ENTRADA firmada: cloudinary convierte y
+  #      guarda el original como WebP calidad 90 (pérdida < 10%) SIEMPRE, sin
+  #      depender de que el navegador haya convertido el archivo antes.
+  #   2) eager = derivados de mostrar (detalle + thumb).
+  # La web guarda la URL WebP del derivado como secure_url canónica.
   eager = ("f_webp,q_auto:good,w_800,c_limit|"
            "f_webp,q_auto:eco,w_200,c_thumb")
   params = {"timestamp": int(time.time()), "public_id": public_id,
             "eager": eager,
+            "transformation": "f_webp,q_90",
             "folder": f"minibase/{user}/{collection}/{slug}"}
   # NOTA: no agregar params extra (ej. exif): Cloudinary los ignora al verificar
   # y la firma deja de coincidir -> "Invalid Signature".
