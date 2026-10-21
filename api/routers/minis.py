@@ -117,24 +117,28 @@ def _caller_uid(request) -> str | None:
     return None
 
 def _require_uid(request) -> str:
-  """Solo tú: con Supabase configurado, sin token válido → 401."""
+  """Solo tú: con Supabase configurado, sin token válido → 401 (escritura)."""
   uid = _caller_uid(request)
   if _use_sb() and not uid:
     raise HTTPException(401, "login requerido")
   return uid
 
+def _optional_uid(request) -> str | None:
+  """UID si hay token válido, None si no hay auth (lectura pública permitida)."""
+  return _caller_uid(request)
+
 @router.get("/facets/tags")
 def tag_facets(request: Request, type: str = ""):
-  if _use_sb():
-    uid = _require_uid(request)
-    try:
-      from services import db as _db
-      return {"tags": _db.sb_tag_facets(user_id=uid, ftype=type)}
-    except HTTPException:
-      raise
-    except Exception as e:
-      raise HTTPException(500, f"facets falló: {e}")
-  return {"tags": []}
+  if not _use_sb():
+    return {"tags": []}
+  uid = _optional_uid(request)
+  try:
+    from services import db as _db
+    return {"tags": _db.sb_tag_facets(user_id=uid, ftype=type)}
+  except HTTPException:
+    raise
+  except Exception as e:
+    raise HTTPException(500, f"facets falló: {e}")
 
 FILTERABLE = ["main_color", "secondary_color", "bioform", "material", "height_mm",
               "radius_of_base_mm", "diameter_mm", "designer", "painted_by", "label",
@@ -143,32 +147,33 @@ FILTERABLE = ["main_color", "secondary_color", "bioform", "material", "height_mm
 @router.get("/stats")
 def collection_stats(request: Request):
   """Conteo principal por TIPOS únicos + total de piezas (suma quantity).
-  La lista es paginada; este endpoint da los totales en vivo para el header."""
-  if _use_sb():
-    uid = _require_uid(request)
-    try:
-      from services import db as _db
-      return _db.sb_stats(user_id=uid)
-    except HTTPException:
-      raise
-    except Exception as e:
-      raise HTTPException(500, f"stats falló: {e}")
-  n = len(DEMO_STORE)
-  piezas = sum(int((v.get("quantity") or 1)) for v in DEMO_STORE.values())
-  return {"tipos": n, "piezas": piezas, "por_tipo": {}, "mode": "demo-local"}
+  La lista es paginada; este endpoint da los totales en vivo para el header.
+  Lectura pública (sin login) cuando no hay token."""
+  if not _use_sb():
+    n = len(DEMO_STORE)
+    piezas = sum(int((v.get("quantity") or 1)) for v in DEMO_STORE.values())
+    return {"tipos": n, "piezas": piezas, "por_tipo": {}, "mode": "demo-local"}
+  uid = _optional_uid(request)
+  try:
+    from services import db as _db
+    return _db.sb_stats(user_id=uid)
+  except HTTPException:
+    raise
+  except Exception as e:
+    raise HTTPException(500, f"stats falló: {e}")
 
 @router.get("/facets/fields")
 def field_facets(request: Request):
-  if _use_sb():
-    uid = _require_uid(request)
-    try:
-      from services import db as _db
-      return {"fields": _db.sb_field_facets(user_id=uid)}
-    except HTTPException:
-      raise
-    except Exception as e:
-      raise HTTPException(500, f"field facets falló: {e}")
-  return {"fields": {}}
+  if not _use_sb():
+    return {"fields": {}}
+  uid = _optional_uid(request)
+  try:
+    from services import db as _db
+    return {"fields": _db.sb_field_facets(user_id=uid)}
+  except HTTPException:
+    raise
+  except Exception as e:
+    raise HTTPException(500, f"field facets falló: {e}")
 
 @router.get("")
 def list_minis(request: Request, collection_id: str = "default", q: str = "",
@@ -200,7 +205,7 @@ def list_minis(request: Request, collection_id: str = "default", q: str = "",
   if _use_sb():
     try:
       from services import db as _db
-      uid = _require_uid(request)
+      uid = _optional_uid(request)
       res = _db.sb_list_minis(q=q, ftype=type, tags=tag_list,
                               page=page, page_size=page_size, user_id=uid,
                               filters=filters, direct=direct)
@@ -265,7 +270,7 @@ def create_mini(m: MiniIn, request: Request):
 @router.get("/{mini_id}")
 def get_mini(mini_id: str, request: Request):
   if _use_sb():
-    uid = _require_uid(request)
+    uid = _optional_uid(request)
     try:
       from services import db as _db
       return _db.sb_get_mini(mini_id, user_id=uid)
@@ -342,37 +347,38 @@ def delete_mini(mini_id: str, request: Request):
 @router.get("/{mini_id}/dataset")
 def get_dataset(mini_id: str, request: Request):
   """Dataset para el DM/CV: ficha + campos IA + vistas + embedding.
-  El DM narra solo con lo que hay aquí (inventario real)."""
-  if _use_sb():
-    uid = _require_uid(request)
+  Lectura pública (sin login) cuando no hay token."""
+  uid = _optional_uid(request) if _use_sb() else None
+  if not _use_sb():
+    if mini_id in DEMO_STORE:
+      return {"mini_id": mini_id, "ficha": DEMO_STORE[mini_id],
+              "views": [], "embedding": None, "mode": "demo-local"}
+    raise HTTPException(404, "no existe")
+  try:
+    from services import db as _db
+    m = _db.sb_get_mini(mini_id, user_id=uid)
+    sb = _db.client()
+    views = []
+    emb = None
     try:
-      from services import db as _db
-      m = _db.sb_get_mini(mini_id, user_id=uid)
-      sb = _db.client()
-      views = []
-      emb = None
-      try:
-        views = (sb.table("images").select(
-          "view_type,secure_url,width,height,phash")
-          .eq("miniature_id", mini_id).execute().data) or []
-        erow = (sb.table("miniatures").select("embedding")
+      views = (sb.table("images").select(
+        "view_type,secure_url,width,height,phash")
+        .eq("miniature_id", mini_id).execute().data) or []
+      erow = (sb.table("miniatures").select("embedding")
                 .eq("id", mini_id).limit(1).execute().data or [{}])[0]
-        emb = erow.get("embedding")
-      except Exception as e:
-        print(f"[dataset] views/embedding: {e}")
-      return {"mini_id": mini_id, "ficha": m,
+      emb = erow.get("embedding")
+    except Exception as e:
+      print(f"[dataset] views/embedding: {e}")
+    result = {"mini_id": mini_id, "ficha": m,
               "ia": {k: m.get(k) for k in
                      ("size_category", "paint_status", "aliases", "grid_cells",
                       "role", "system", "faction", "play_count", "is_favorite")},
               "views": views, "embedding": emb, "mode": "supabase"}
-    except HTTPException:
-      raise
-    except Exception as e:
-      raise HTTPException(500, f"dataset falló: {e}")
-  if mini_id in DEMO_STORE:
-    return {"mini_id": mini_id, "ficha": DEMO_STORE[mini_id],
-            "views": [], "embedding": None, "mode": "demo-local"}
-  raise HTTPException(404, "no existe")
+  except HTTPException:
+    raise
+  except Exception as e:
+    raise HTTPException(500, f"dataset falló: {e}")
+  return result
 
 @router.post("/{mini_id}/images/sign")
 def sign_image(mini_id: str, request: Request, view_type: str = "frontal", collection: str = "default", slug: str = "mini", user: str = "demo"):

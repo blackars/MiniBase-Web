@@ -23,7 +23,6 @@ def _role_of(view_type: str) -> str:
   return "photo"
 
 def _uid(request: Request) -> str:
-  from services import db as _db
   auth = request.headers.get("authorization", "")
   if not auth.lower().startswith("bearer "):
     raise HTTPException(401, "login requerido")
@@ -31,6 +30,17 @@ def _uid(request: Request) -> str:
     return _db.user_id_from_token(auth.split(" ", 1)[1].strip())
   except Exception:
     raise HTTPException(401, "token inválido")
+
+def _optional_uid(request: Request) -> str | None:
+  """UID si hay token válido, None si no hay auth (lectura pública permitida)."""
+  from services import db as _db
+  try:
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+      return None
+    return _db.user_id_from_token(auth.split(" ", 1)[1].strip())
+  except Exception:
+    return None
 
 def _own_mini(sb, uid: str, mid: str) -> dict:
   col_id, _ = sb_col(sb, uid)
@@ -58,9 +68,10 @@ class ImageComplete(BaseModel):
 @router.get("/by-mini/{mini_id}")
 def list_images(mini_id: str, request: Request):
   from services import db as _db
-  uid = _uid(request)
+  uid = _optional_uid(request)
   sb = _db.client()
-  _own_mini(sb, uid, mini_id)
+  if uid:
+    _own_mini(sb, uid, mini_id)
   try:
     rows = sb.table("images").select("*").eq("miniature_id", mini_id) \
       .order("created_at").execute().data or []
@@ -77,22 +88,27 @@ class CoversIn(BaseModel):
 
 @router.post("/covers")
 def covers(c: CoversIn, request: Request):
-  """Portada por mini en 1 query: frontal > render_3d > concept_art > 1ra foto."""
+  """Portada por mini en 1 query: frontal > render_3d > concept_art > 1ra foto.
+  Lectura pública (sin login) cuando no hay token."""
   from services import db as _db
-  uid = _uid(request)
+  uid = _optional_uid(request)
   sb = _db.client()
   ids = (c.ids or [])[:200]
   if not ids:
     return {"covers": {}}
-  col = sb.table("collections").select("id").eq("user_id", uid).limit(1).execute().data
-  if not col:
-    return {"covers": {}}
-  col_id = col[0]["id"]
-  mine = sb.table("miniatures").select("id").eq("collection_id", col_id) \
-    .in_("id", ids).execute().data or []
-  mine_ids = [r["id"] for r in mine]
-  if not mine_ids:
-    return {"covers": {}}
+  if uid:
+    col = sb.table("collections").select("id").eq("user_id", uid).limit(1).execute().data
+    if not col:
+      return {"covers": {}}
+    col_id = col[0]["id"]
+    mine = sb.table("miniatures").select("id").eq("collection_id", col_id) \
+      .in_("id", ids).execute().data or []
+    mine_ids = [r["id"] for r in mine]
+    if not mine_ids:
+      return {"covers": {}}
+  else:
+    # modo invitado: todas las minis de la colección default (ids tal cual)
+    mine_ids = ids
   rows = sb.table("images").select("miniature_id,view_type,secure_url,role") \
     .in_("miniature_id", mine_ids).order("created_at").execute().data or []
   order = {"frontal": 0, "render_3d": 1, "concept_art": 2}

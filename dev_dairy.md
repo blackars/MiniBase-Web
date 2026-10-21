@@ -533,3 +533,57 @@ NO se tocan. Solo se tradujo lo visible en `web/app/`.
   `escenarios/page.tsx` (tsc lo delató); restaurado y re-verificado.
 - Pendiente usuario: `Ctrl+Shift+R` en el navegador para ver la UI en inglés;
   commit/push de los 7 archivos.
+
+---
+
+## 15. Sesión 2026-10-21 — acceso de invitado (solo lectura) + Sign in en el header
+
+### 15.1 Comportamiento
+- La app abre directo como **invitado** sin pedir login: galería con buscador,
+  filtros (tipo, tags, 13 campos) y paginación sobre la colección default.
+- Invitado = solo lectura: sin `+ New type`, Import Excel, Complete, Scenarios,
+  sin botones Edit/Delete ni subida de fotos ni backup Drive. El modal de detalle
+  y la galería funcionan en modo lectura.
+- Caja superior derecha: si no hay sesión muestra **Sign in** (abre modal);
+  si hay sesión mantiene `Signed in as … / Sign out`. El modal solo permite
+  iniciar sesión, no crear cuentas. Al cerrar sesión vuelve a invitado y recarga.
+
+### 15.2 API — lectura pública, escritura protegida
+- `routers/minis.py`: nuevo `_optional_uid()` (None sin token).
+  GET públicos: `/facets/tags`, `/stats`, `/facets/fields`, `/`, `/{id}`, `/{id}/dataset`.
+  POST/PUT/DELETE siguen con `_require_uid()` → 401.
+- `routers/media.py`: `_optional_uid()`; GET `/by-mini/{id}` y POST `/covers`
+  públicos (comprueban propiedad solo si hay token). `/complete`, `/backup`,
+  `DELETE /{id}` siguen protegidos.
+- Sin token, la API resuelve la colección bootstrap (`get_default_collection`),
+  así el invitado ve los datos reales sin exponer escritura.
+- Fix: se restauró el decorador `@router.post("/{mini_id}/images/sign")` que se
+  había perdido en una edición de `get_dataset` (la ruta de subida daba 404).
+- Fix: indentación inválida en `get_dataset` (except del try interno) que impedía
+  compilar `minis.py`.
+
+### 15.3 Web
+- `web/app/page.tsx`: se eliminó la "PUERTA TOTAL"; el `useEffect` inicial intenta
+  restaurar sesión y, si no hay, entra como invitado y carga todo sin token.
+- Header: bloque Sign in / Signed in + Sign out; modal `showLogin` (email+password,
+  sin registro) con Enter para enviar.
+- Acciones de escritura y botones Edit/Delete ocultos con `user &&`; `Gallery`
+  recibe `canUpload`/`canDelete` y oculta upload, selector de vista y backup Drive
+  en invitado.
+- `loadCovers`, `loadFacets`, `loadFieldFacets`, `loadStats` omiten el header
+  Authorization si no hay token; el debounce del buscador ya corre en invitado.
+- `/imports`, `/inbox`, `/escenarios`, `/proyector` siguen redirigiendo a `/`
+  cuando no hay sesión.
+
+### 15.4 Verificación
+- `py_compile` OK en `minis.py` y `media.py`.
+- `npx tsc --noEmit --skipLibCheck` limpio; `next build` OK (8 páginas).
+- TestClient sin Authorization: `/api/minis` 200 (709 tipos), `/stats` 200
+  (709/972), facetas 200, `/covers` 200, `/by-mini` 200.
+- Guardias: POST `/api/minis` 401, POST `/images/complete` 401, sign 401,
+  DELETE mini 401, GET `/api/scenarios` 401.
+- API reiniciada en vivo (uvicorn :8000) y verificada sin Authorization:
+  `/stats` 200 (709/972), `/api/minis` 200 (709), tags 22, `/api/scenarios` 401.
+- `next dev` reiniciado tras el `next build` (el build pisó `.next` y provocó un
+  500 temporal en :3000); la home responde 200.
+- Pendiente usuario: `Ctrl+Shift+R` en el navegador para ver el modo invitado.

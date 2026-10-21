@@ -106,12 +106,12 @@ function Logo() {
   return (<img src="/logo.webp" width="34" height="34" alt="MiniBase" />);
 }
 
-function Gallery({ mini, token, api }: { mini: any; token: string; api: string }) {  const [gal, setGal] = useState<any>(null);
+function Gallery({ mini, token, api, canUpload = true, canDelete = true }: { mini: any; token: string; api: string; canUpload?: boolean; canDelete?: boolean }) {  const [gal, setGal] = useState<any>(null);
   const [view, setView] = useState("frontal");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [drive, setDrive] = useState("");
-  const H = { Authorization: `Bearer ${token}` };
+  const H = token ? { Authorization: `Bearer ${token}` } : ({} as any);
 
   async function load() {
     try {
@@ -122,6 +122,7 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
   useEffect(() => { load(); }, [mini.id]);
 
   async function upload(e: any) {
+    if (!canUpload) { setMsg("Sign in to upload photos."); return; }
     const raw = e.target.files?.[0];
     if (!raw) return;
     if (raw.size > 10 * 1024 * 1024) { setMsg("Max 10MB per photo."); return; }
@@ -176,6 +177,7 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
   }
 
   async function del(id: string) {
+    if (!canDelete) return;
     if (!confirm("Delete this image?")) return;
     const r = await fetch(`${api}/api/images/${id}`, { method: "DELETE", headers: H });
     const j = await r.json().catch(() => ({}));
@@ -198,7 +200,7 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
         <img src={img.secure_url} alt={img.view_type} className="w-full aspect-square object-cover rounded bg-zinc-800" loading="lazy" />
       </a>
       <span className="absolute top-1 left-1 text-[10px] bg-black/70 rounded px-1">{img.view_type}{img.backup_url ? " 💾" : ""}</span>
-      <button onClick={() => del(img.id)} className="absolute top-1 right-1 text-[10px] bg-red-950/90 rounded px-1 hidden group-hover:block">✕</button>
+      <button onClick={() => del(img.id)} className={`absolute top-1 right-1 text-[10px] bg-red-950/90 rounded px-1 ${!canDelete ? "hidden" : "group-hover:block"}`}>✕</button>
     </div>);
   }
 
@@ -212,23 +214,27 @@ function Gallery({ mini, token, api }: { mini: any; token: string; api: string }
     {(gal.references.length > 0 || gal.videos.length > 0) && (
       <div className="mt-2"><span className="text-xs font-bold text-zinc-400">Reference (does not train)</span>
         <div className="grid grid-cols-4 gap-1 mt-1">{[...gal.references, ...gal.videos].map(thumb)}</div></div>)}
-    <div className="flex gap-1 mt-2 items-center flex-wrap">
-      <select value={view} onChange={e => setView(e.target.value)} className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs">
-        <optgroup label="Photo (trains)">{PHOTO_VIEWS.map(v => <option key={v} value={v}>{v}</option>)}</optgroup>
-        <optgroup label="Reference (does not train)">{REF_VIEWS.map(v => <option key={v} value={v}>{v}</option>)}</optgroup>
-      </select>
-      <label className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 cursor-pointer">
-        {busy ? "…" : "📷 Upload photo"}
-        <input type="file" accept="image/*" className="hidden" onChange={upload} disabled={busy} />
-      </label>
-    </div>
+    {canUpload && (
+      <div className="flex gap-1 mt-2 items-center flex-wrap">
+        <select value={view} onChange={e => setView(e.target.value)} className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-xs">
+          <optgroup label="Photo (trains)">{PHOTO_VIEWS.map(v => <option key={v} value={v}>{v}</option>)}</optgroup>
+          <optgroup label="Reference (does not train)">{REF_VIEWS.map(v => <option key={v} value={v}>{v}</option>)}</optgroup>
+        </select>
+        <label className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 cursor-pointer">
+          {busy ? "…" : "📷 Upload photo"}
+          <input type="file" accept="image/*" className="hidden" onChange={upload} disabled={busy} />
+        </label>
+      </div>
+    )}
     {msg && <p className="text-xs text-amber-400 mt-1">{msg}</p>}
-    <div className="flex gap-1 mt-2 items-center">
-      <input value={drive} onChange={e => setDrive(e.target.value)} placeholder="Paste Drive link (vault) for the latest photo…"
-        className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs" />
-      <button onClick={() => gal.photos.length && attachBackup(gal.photos[gal.photos.length - 1].id)}
-        className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1">💾</button>
-    </div>
+    {canUpload && (
+      <div className="flex gap-1 mt-2 items-center">
+        <input value={drive} onChange={e => setDrive(e.target.value)} placeholder="Paste Drive link (vault) for the latest photo…"
+          className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs" />
+        <button onClick={() => gal.photos.length && attachBackup(gal.photos[gal.photos.length - 1].id)}
+          className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1">💾</button>
+      </div>
+    )}
   </div>);
 }
 
@@ -244,6 +250,7 @@ export default function Dashboard() {
   const [user, setUser] = useState<any>(null);
   const [token, setToken] = useState<string>("");
   const [loginMsg, setLoginMsg] = useState("");
+  const [showLogin, setShowLogin] = useState(false);
   const [lemail, setLemail] = useState("");
   const [lpass, setLpass] = useState("");
   const [checking, setChecking] = useState(true);
@@ -267,8 +274,8 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetch(`${API}/health`).then(() => setApiOk("API connected")).catch(() => setApiOk("API offline"));
-    // Restaura sesión guardada y valídala contra /auth/v1/user.
-    // Sin sesión NO se carga nada de la app (landing de auth primero).
+    // Entrada automática como invitado (solo lectura). Si hay sesión guardada,
+    // se restaura y se activa el modo completo (editar, importar, escenarios).
     (async () => {
       try {
         const raw = localStorage.getItem("mb_session");
@@ -286,6 +293,8 @@ export default function Dashboard() {
           }
         }
       } catch {}
+      // Modo invitado: cargar galería sin token (solo lectura).
+      reload("", ""); loadFacets("", ""); loadFieldFacets(""); loadStats("");
       setChecking(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -315,11 +324,11 @@ export default function Dashboard() {
   }
   // Portadas en 1 sola llamada: frontal > render_3d > concept_art > 1ra foto
   async function loadCovers(ids: string[], tk: string = token) {
-    if (!ids.length || !tk) return;
+    if (!ids.length) return;
     try {
       const r = await fetch(`${API}/api/images/covers`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${tk}`, "Content-Type": "application/json" },
+        headers: { ...(tk ? { Authorization: `Bearer ${tk}` } : {}), "Content-Type": "application/json" },
         body: JSON.stringify({ ids }) });
       const j = await r.json();
       if (r.ok) setCovers(j.covers ?? {});
@@ -329,7 +338,7 @@ export default function Dashboard() {
     try {
       const qs = type ? `?type=${encodeURIComponent(type)}` : "";
       const r = await fetch(`${API}/api/minis/facets/tags${qs}`, {
-        headers: { Authorization: `Bearer ${tk}` } });
+        headers: tk ? { Authorization: `Bearer ${tk}` } : {} });
       const j = await r.json();
       if (r.ok) setFacets(j.tags ?? []);
     } catch {}
@@ -337,7 +346,7 @@ export default function Dashboard() {
   async function loadFieldFacets(tk: string) {
     try {
       const r = await fetch(`${API}/api/minis/facets/fields`, {
-        headers: { Authorization: `Bearer ${tk}` } });
+        headers: tk ? { Authorization: `Bearer ${tk}` } : {} });
       const j = await r.json();
       if (r.ok) setFfacets(j.fields ?? {});
     } catch {}
@@ -346,7 +355,7 @@ export default function Dashboard() {
   async function loadStats(tk: string) {
     try {
       const r = await fetch(`${API}/api/minis/stats`, {
-        headers: { Authorization: `Bearer ${tk}` } });
+        headers: tk ? { Authorization: `Bearer ${tk}` } : {} });
       const j = await r.json();
       if (r.ok) setStats(j);
     } catch {}
@@ -361,13 +370,14 @@ export default function Dashboard() {
     reload(q, token, 1, [], "", pageSize, {});
   }
   const nActiveFilters = Object.keys(fvals).length + selTags.length + (ftype ? 1 : 0);
-  // Debounce de búsqueda: no dispara por tecla sino 350ms después de parar
+  // Debounce de búsqueda: no dispara por tecla sino 350ms después de parar.
+  // Funciona igual en modo invitado (sin token).
   useEffect(() => {
-    if (!token) return;
+    if (checking) return;
     const t = setTimeout(() => reload(q, token, 1), 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, [q, checking]);
   // Registro BLOQUEADO: solo entra la cuenta existente (miniaturesab).
   // Para abrir registro en el futuro: restLogin(..., "up") + deshabilitar RLS de signup.
   async function doLogin() {
@@ -383,7 +393,7 @@ export default function Dashboard() {
       localStorage.setItem("mb_session", JSON.stringify({
         access_token: data.access_token, refresh_token: data.refresh_token, user: data.user,
       }));
-      setUser(data.user); setToken(data.access_token);
+      setUser(data.user); setToken(data.access_token); setShowLogin(false);
       setLoginMsg(""); reload("", data.access_token); loadFacets(data.access_token, ""); loadFieldFacets(data.access_token); loadStats(data.access_token);
     } catch (e: any) {
       setLoginMsg("No connection to Supabase: " + (e?.message || e));
@@ -396,7 +406,10 @@ export default function Dashboard() {
       });
     } catch {}
     localStorage.removeItem("mb_session");
-    setUser(null); setToken(""); setMinis([]);
+    setUser(null); setToken("");
+    // Vuelve a modo invitado (solo lectura) y recarga la galería sin token.
+    setQ(""); setFtype(""); setSelTags([]); setPage(1);
+    reload("", ""); loadFacets("", ""); loadFieldFacets(""); loadStats("");
   }
   function openCreate() { setEditing(null); setForm(EMPTY); setShowForm(true); }
   function openEdit(m: any) { setEditing(m); setForm(fromRec(m)); setShowForm(true); setDetail(null); }
@@ -425,23 +438,7 @@ export default function Dashboard() {
   const lbl = "text-xs text-zinc-400 mb-1 block";
 
   if (checking) return (<main className="min-h-screen flex items-center justify-center mb-sharp">
-    <p className="text-zinc-500 text-sm">Checking session…</p>
-  </main>);
-
-  // PUERTA TOTAL: sin sesión no se renderiza nada de la app (ni buscador ni tipos).
-  if (!user) return (<main className="min-h-screen flex items-center justify-center p-6 mb-sharp">
-    <div className="bg-zinc-900 border border-zinc-800 rounded p-6 w-full max-w-sm">
-      <h1 className="text-2xl font-bold">MiniBase Web</h1>
-      <p className="text-xs text-zinc-500 mt-1">Private access — {apiOk}</p>
-      <input value={lemail} onChange={e => setLemail(e.target.value)} placeholder="you@email.com" type="email"
-        onKeyDown={e => e.key === "Enter" && doLogin()}
-        className="mt-4 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 outline-none w-full text-sm" />
-      <input value={lpass} onChange={e => setLpass(e.target.value)} placeholder="password" type="password"
-        onKeyDown={e => e.key === "Enter" && doLogin()}
-        className="mt-2 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 outline-none w-full text-sm" />
-      <button onClick={() => doLogin()} className="mt-3 bg-white text-black rounded px-4 py-2 text-sm font-semibold w-full">Sign in</button>
-      {loginMsg && <p className="text-xs text-amber-400 mt-2">{loginMsg}</p>}
-    </div>
+    <p className="text-zinc-500 text-sm">Loading…</p>
   </main>);
 
   return (<main className="p-6 max-w-6xl mx-auto mb-sharp">
@@ -449,9 +446,12 @@ export default function Dashboard() {
       <h1 className="text-3xl font-bold flex items-center gap-3"><Logo />MiniBase Web</h1>
       <div className="bg-zinc-900 border border-zinc-800 px-3 py-2 text-xs text-zinc-400 text-right">
         <p className="text-zinc-500">API: {apiOk} · {stats ? `${stats.tipos} types · ${stats.piezas} pieces` : `${total} types`} · Supabase cloud · <a className="underline" href={`${API}/docs`} target="_blank">Swagger</a></p>
-        <p className="mt-1">Signed in as: <span className="text-emerald-400">{user.email}</span>
-          <button onClick={doLogout} className="underline ml-3">Sign out</button>
-        </p>
+        {user ? (
+          <p className="mt-1">Signed in as: <span className="text-emerald-400">{user.email}</span>
+            <button onClick={doLogout} className="underline ml-3">Sign out</button></p>
+        ) : (
+          <button onClick={() => setShowLogin(true)} className="mt-1 bg-white text-black rounded px-3 py-1 text-xs font-semibold">Sign in</button>
+        )}
       </div>
     </div>
     <div className="flex gap-2 mt-4 flex-wrap">
@@ -466,10 +466,12 @@ export default function Dashboard() {
         <option value="">all types</option>
         {["mini", "scenery", "token", "tile", "prop"].map(t => <option key={t} value={t}>{t}</option>)}
       </select>
-      <button onClick={openCreate} className="bg-white text-black rounded px-4 py-2 font-semibold">+ New type</button>
-      <a href="/imports" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">⭳ Import Excel</a>
-      <a href="/inbox" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">✓ Complete</a>
-      <a href="/escenarios" className="bg-emerald-400 text-black rounded px-4 py-2 font-semibold">◈ Scenarios</a>
+      {user && (<>
+        <button onClick={openCreate} className="bg-white text-black rounded px-4 py-2 font-semibold">+ New type</button>
+        <a href="/imports" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">⭳ Import Excel</a>
+        <a href="/inbox" className="bg-zinc-800 border border-zinc-700 rounded px-4 py-2">✓ Complete</a>
+        <a href="/escenarios" className="bg-emerald-400 text-black rounded px-4 py-2 font-semibold">◈ Scenarios</a>
+      </>)}
     </div>
     {facets.length > 0 && (
       <div className="flex gap-1 mt-2 flex-wrap items-center">
@@ -513,9 +515,11 @@ export default function Dashboard() {
           <div className="font-semibold truncate">{m.name}</div>
           <div className="text-xs text-zinc-400">{m.type} · x{m.quantity ?? 1} · {m.completeness_score ?? 0}%</div>
           <div className="h-1 bg-zinc-800 rounded mt-2"><div className="h-1 bg-emerald-400 rounded" style={{ width: `${m.completeness_score ?? 0}%` }} /></div>
-          <div className="flex gap-2 mt-2">
-            <button onClick={(e) => { e.stopPropagation(); openEdit(m); }} className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-full">Edit</button>
-          </div>
+          {user && (
+            <div className="flex gap-2 mt-2">
+              <button onClick={(e) => { e.stopPropagation(); openEdit(m); }} className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 w-full">Edit</button>
+            </div>
+          )}
         </div>))}
     </div>
     {minis.length === 0 && !loading && <p className="text-zinc-500 mt-6">No results. Adjust search or filters.</p>}
@@ -555,9 +559,9 @@ export default function Dashboard() {
           <p className="text-sm mt-3"><span className={lbl}>Story / lore</span>{detail.story || "No story yet"}</p>
           {detail.comment && (<p className="text-sm mt-2"><span className={lbl}>Comment</span>{detail.comment}</p>)}
           <p className="text-xs text-zinc-500 mt-1">Origin: {detail.character_origin || "—"} · Ref: {detail.code_or_reference || "—"}</p>
-          <Gallery mini={detail} token={token} api={API} />
+          <Gallery mini={detail} token={token} api={API} canUpload={!!user} canDelete={!!user} />
           <div className="flex gap-2 mt-4">
-            <button onClick={() => openEdit(detail)} className="bg-white text-black rounded px-3 py-2 text-sm font-semibold">Edit entry</button>
+            {user && (<button onClick={() => openEdit(detail)} className="bg-white text-black rounded px-3 py-2 text-sm font-semibold">Edit entry</button>)}
             <button onClick={() => setDetail(null)} className="bg-zinc-800 rounded px-3 py-2 text-sm">Close</button>
           </div>
         </div>
@@ -606,7 +610,7 @@ export default function Dashboard() {
             <div className="mt-3 border-t border-zinc-800 pt-3">
               <h3 className="text-sm font-bold">Photos per view (13 schema + reference)</h3>
               <p className="text-xs text-zinc-500">Frontal is the cover; if missing, render_3d; otherwise the illustration (concept_art).</p>
-              <Gallery mini={editing} token={token} api={API} />
+              <Gallery mini={editing} token={token} api={API} canUpload={!!user} canDelete={!!user} />
             </div>
           ) : (
             <p className="text-xs text-zinc-500 mt-3">Save the entry first and you can upload its 13 views right here.</p>
@@ -619,5 +623,23 @@ export default function Dashboard() {
           </div>
         </form>
       </div>)}
+
+    {showLogin && (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={() => setShowLogin(false)}>
+        <div className="bg-zinc-950 border border-zinc-800 rounded p-6 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+          <h2 className="text-xl font-bold mb-1">Sign in</h2>
+          <p className="text-xs text-zinc-500 mb-4">Existing account only — no sign up here.</p>
+          <input value={lemail} onChange={e => setLemail(e.target.value)} placeholder="you@email.com" type="email"
+            onKeyDown={e => e.key === "Enter" && doLogin()}
+            className="mb-3 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 outline-none w-full text-sm" />
+          <input value={lpass} onChange={e => setLpass(e.target.value)} placeholder="password" type="password"
+            onKeyDown={e => e.key === "Enter" && doLogin()}
+            className="mb-4 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 outline-none w-full text-sm" />
+          <button onClick={() => doLogin()} className="bg-white text-black rounded px-4 py-2 font-semibold w-full">Sign in</button>
+          {loginMsg && <p className="text-xs text-amber-400 mt-3">{loginMsg}</p>}
+          <button onClick={() => setShowLogin(false)} className="text-xs text-zinc-500 underline mt-3 w-full">Cancel</button>
+        </div>
+      </div>
+    )}
   </main>);
 }
