@@ -1,8 +1,8 @@
 """Keepalive Supabase Free: evita la pausa por inactividad.
 
-Supabase pausa los proyectos sin actividad (~7 dias). Este script hace
-2 queries baratas (SELECT + heartbeat) para registrar actividad.
-Se ejecuta solo via GitHub Actions cada 2 dias (ver .github/workflows/keepalive.yml).
+Supabase pausa los proyectos con poca actividad durante 7 dias. Este script hace
+3 queries baratas (2 SELECT + heartbeat) para registrar actividad diaria.
+Se ejecuta solo via GitHub Actions a diario (ver .github/workflows/keepalive.yml).
 
 Uso local:
   python api/scripts/keepalive.py
@@ -41,7 +41,13 @@ def main() -> int:
         if a.verbose:
             print(f"[keepalive] collections OK (muestra={n_col})")
 
-        # 2. Escritura minima en heartbeat (si existe la tabla 008_keepalive).
+        # 2. Segunda lectura barata: suficiente actividad diaria en otra tabla.
+        r = sb.table("miniatures").select("id").limit(1).execute()
+        n_min = len(r.data or [])
+        if a.verbose:
+            print(f"[keepalive] miniatures OK (muestra={n_min})")
+
+        # 3. Escritura minima en heartbeat (si existe la tabla 008_keepalive).
         # Si la tabla no existe aun, el SELECT anterior ya evito la pausa.
         try:
             now = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -56,7 +62,7 @@ def main() -> int:
             print(f"[keepalive] heartbeat skip (aplica migracion 008): {e}")
 
         print(f"[keepalive] OK {datetime.datetime.now(datetime.timezone.utc):%Y-%m-%d %H:%M UTC} "
-              f"collections_muestra={n_col}")
+              f"collections_muestra={n_col} miniatures_muestra={n_min}")
         return 0
     except Exception as e:
         print(f"[keepalive] FAIL: {e}")

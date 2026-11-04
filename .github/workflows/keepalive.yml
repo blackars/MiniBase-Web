@@ -1,13 +1,15 @@
 # Keepalive Supabase Free — evita la pausa por inactividad.
-# Corre cada 2 dias (cron UTC) + boton manual. Hace 2 queries baratas.
+# Corre a diario (cron UTC) + boton manual. Hace 3 queries baratas.
+# Supabase recomienda "unos pocos requests al dia" durante la semana previa:
+# https://supabase.com/docs/guides/platform/project-pausing
 # Requiere secrets: SUPABASE_URL, SUPABASE_SECRET_KEY
 # (Settings > Secrets > Actions). Usa SECRET (service_role), nunca ANON en backup,
-# pero aqui solo lee collections + upsert heartbeat: sin datos sensibles en logs.
+# pero aqui solo lee collections/miniatures + upsert heartbeat: sin datos sensibles.
 name: keepalive-supabase
 
 on:
   schedule:
-    - cron: "17 8 */2 * *"   # cada 2 dias, 08:17 UTC (evita hora en punto)
+    - cron: "17 8 * * *"   # a diario, 08:17 UTC (evita hora en punto)
   workflow_dispatch: {}
 
 jobs:

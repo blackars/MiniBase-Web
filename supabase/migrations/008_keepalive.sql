@@ -1,5 +1,5 @@
 -- 008_keepalive.sql — tabla heartbeat para el keepalive (opcional pero recomendada).
--- El workflow .github/workflows/keepalive.yml hace SELECT + upsert aqui cada 2 dias.
+-- El workflow .github/workflows/keepalive.yml hace SELECT + upsert aqui a diario.
 -- Sin RLS restrictivo: solo service_role escribe (el script usa SECRET_KEY en servidor).
 
 create table if not exists public.keepalive_heartbeat (

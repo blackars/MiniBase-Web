@@ -136,7 +136,7 @@ MiniBase-Web/
 │   └── scripts/         # keepalive.py, export_backup.py, bulk_upsert_excel.py, ...
 ├── supabase/migrations/ # 001_init … 008_keepalive (aplicar en orden en SQL Editor)
 ├── backups/             # Excel + CSV + manifest.json (generado por Actions)
-├── .github/workflows/   # keepalive.yml (cada 2 días), backup-excel.yml (cada 3 días)
+├── .github/workflows/   # keepalive.yml (a diario), backup-excel.yml (cada 3 días)
 ├── src/                 # v1 desktop congelada (referencia + migración SQLite)
 ├── screenshots/         # capturas v1 + placeholders web
 ├── docs/PROGRESS.md     # checklist por módulo
@@ -173,9 +173,9 @@ Requisitos: Python 3.11+, Node 18+, proyecto Supabase Free, cuenta Cloudinary.
 Supabase Free pausa el proyecto tras ~7 días sin actividad; además los datos no
 pueden vivir solo en la nube sin clon consultable. Dos workflows lo resuelven:
 
-- **keepalive** (`keepalive.yml`, cada 2 días): `api/scripts/keepalive.py` hace un
-  `SELECT` + `upsert` al heartbeat. Requiere secrets `SUPABASE_URL`,
-  `SUPABASE_SECRET_KEY`.
+- **keepalive** (`keepalive.yml`, a diario): `api/scripts/keepalive.py` hace 2
+  `SELECT` + `upsert` al heartbeat. Supabase recomienda actividad diaria para no
+  pausar proyectos Free. Requiere secrets `SUPABASE_URL`, `SUPABASE_SECRET_KEY`.
 - **backup-excel** (`backup-excel.yml`, cada 3 días): `api/scripts/export_backup.py`
   exporta las 17 tablas a `backups/MiniBase_YYYY-MM-DD.xlsx` (multi-hoja + `_INDICE`),
   `backups/MiniBase_latest.xlsx` (link estable), `backups/csv/<tabla>.csv` y
