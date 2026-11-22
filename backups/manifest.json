@@ -1,6 +1,6 @@
 {
-  "fecha_utc": "2026-11-19",
-  "generado_utc": "2026-11-19T16:37:58.163178+00:00",
+  "fecha_utc": "2026-11-22",
+  "generado_utc": "2026-11-22T15:26:15.926733+00:00",
   "tablas": {
     "collections": 1,
     "miniatures": 709,
@@ -22,5 +22,5 @@
   },
   "total_filas": 12539,
   "nota_embedding": "miniatures.embedding excluido a proposito (vector 512)",
-  "xlsx": "MiniBase_2026-11-19.xlsx"
+  "xlsx": "MiniBase_2026-11-22.xlsx"
 }
